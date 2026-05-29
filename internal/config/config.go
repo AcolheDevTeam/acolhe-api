@@ -5,12 +5,14 @@ import "os"
 type Config struct {
 	Port        string
 	DatabaseURL string
+	JWTSecret   string
 }
 
 func Load() Config {
 	return Config{
 		Port:        env("PORT", "8080"),
 		DatabaseURL: env("DATABASE_URL", "postgres://localhost:5432/acolhe?sslmode=disable"),
+		JWTSecret:   env("JWT_SECRET", "dev-secret-troca-em-producao"),
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/joycesilva/acolhe-api/internal/config"
 	"github.com/joycesilva/acolhe-api/internal/db"
+	"github.com/joycesilva/acolhe-api/internal/httpapi"
 )
 
 func main() {
@@ -23,19 +24,11 @@ func main() {
 	}
 	defer pool.Close()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		if err := pool.Ping(r.Context()); err != nil {
-			http.Error(w, "db unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
+	server := httpapi.New(pool, cfg.JWTSecret)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
-		Handler:      mux,
+		Handler:      server.Routes(),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 15 * time.Second,
 	}

@@ -1,8 +1,9 @@
--- Acolhe — schema inicial (PostgreSQL)
+-- Acolhe — schema (PostgreSQL)
+-- Fonte ÚNICA da verdade: Atlas gera migrations daqui e sqlc gera tipos Go daqui.
 -- Derivado do ERD v0.1. Cobre os quatro bounded contexts:
 -- Identidade & Multi-tenancy, Clínico, Atividades, Operacional.
-
-BEGIN;
+--
+-- NOTA: sem BEGIN/COMMIT — Atlas e sqlc esperam DDL puro (declarativo).
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;   -- gen_random_uuid()
 
@@ -46,16 +47,16 @@ CREATE TABLE "user" (
 );
 
 CREATE TABLE psychologist_profile (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id     uuid NOT NULL REFERENCES "user"(id),
-  full_name   text NOT NULL,
-  crp_number  text NOT NULL,
-  crp_state   text NOT NULL,
-  crp_status  text NOT NULL DEFAULT 'active',
-  approach    text,
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       uuid NOT NULL REFERENCES "user"(id),
+  full_name     text NOT NULL,
+  crp_number    text NOT NULL,
+  crp_state     text NOT NULL,
+  crp_status    text NOT NULL DEFAULT 'active',
+  approach      text,
   cpf_encrypted bytea,
-  created_at  timestamptz NOT NULL DEFAULT now(),
-  updated_at  timestamptz NOT NULL DEFAULT now()
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE patient_profile (
@@ -286,6 +287,17 @@ CREATE TABLE activity_comment (
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 
+-- Check-in: auto-registro de humor/estado do paciente entre sessões.
+CREATE TABLE checkin (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id  uuid NOT NULL REFERENCES patient_profile(id),
+  mood        integer NOT NULL CHECK (mood BETWEEN 1 AND 5),
+  note        text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_checkin_patient_date ON checkin (patient_id, created_at DESC);
+
 -- ============================================================
 -- 4. Operacional & Observabilidade
 -- ============================================================
@@ -381,4 +393,48 @@ CREATE INDEX idx_audit_actor_time ON audit_log (actor_user_id, occurred_at DESC)
 CREATE INDEX idx_audit_org_time ON audit_log (organization_id, occurred_at DESC);
 CREATE INDEX idx_audit_resource ON audit_log (resource_type, resource_id);
 
-COMMIT;
+-- ============================================================
+-- 7. Row-Level Security (2ª camada de defesa)
+-- A 1ª camada é o middleware da aplicação (organization_id explícito nas queries).
+-- A aplicação seta o contexto por transação via SET LOCAL acolhe.* (ver middleware/tenant.go).
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION current_organization_id() RETURNS uuid AS $$
+  SELECT NULLIF(current_setting('acolhe.organization_id', true), '')::uuid
+$$ LANGUAGE SQL STABLE;
+
+CREATE OR REPLACE FUNCTION current_user_id() RETURNS uuid AS $$
+  SELECT NULLIF(current_setting('acolhe.user_id', true), '')::uuid
+$$ LANGUAGE SQL STABLE;
+
+CREATE OR REPLACE FUNCTION current_psychologist_id() RETURNS uuid AS $$
+  SELECT NULLIF(current_setting('acolhe.psychologist_id', true), '')::uuid
+$$ LANGUAGE SQL STABLE;
+
+CREATE OR REPLACE FUNCTION current_user_role() RETURNS text AS $$
+  SELECT current_setting('acolhe.user_role', true)
+$$ LANGUAGE SQL STABLE;
+
+ALTER TABLE patient_profile     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE appointment         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE session             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE clinical_record     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE documentary_record  ENABLE ROW LEVEL SECURITY;
+
+-- Psicólogo vê só seus pacientes; paciente vê só a si; org_admin vê listagem da org.
+CREATE POLICY patient_isolation ON patient_profile
+  FOR SELECT USING (
+    CASE current_user_role()
+      WHEN 'psychologist' THEN id IN (
+        SELECT patient_id FROM patient_relationship
+        WHERE psychologist_id = current_psychologist_id()
+      )
+      WHEN 'patient'   THEN user_id = current_user_id()
+      WHEN 'org_admin' THEN organization_id = current_organization_id()
+      ELSE false
+    END
+  );
+
+-- Registro Documental: só o autor, sempre.
+CREATE POLICY documentary_record_author_only ON documentary_record
+  FOR ALL USING (author_id = current_psychologist_id());

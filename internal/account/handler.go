@@ -1,6 +1,7 @@
 package account
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -32,8 +33,8 @@ func (h *Handler) login(c echo.Context) error {
 
 	res, err := h.svc.Login(c.Request().Context(), req.Email, req.Password)
 	if err != nil {
-		switch err {
-		case ErrInvalidCredentials:
+		switch {
+		case errors.Is(err, ErrInvalidCredentials):
 			return echo.NewHTTPError(http.StatusUnauthorized, err.Error())
 		default:
 			return echo.NewHTTPError(http.StatusInternalServerError, "falha ao gerar sessão")

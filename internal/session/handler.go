@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -29,10 +30,10 @@ func (h *Handler) create(c echo.Context) error {
 	}
 	s, err := h.svc.Create(c.Request().Context(), req)
 	if err != nil {
-		switch err {
-		case ErrNoActiveRelationship:
+		switch {
+		case errors.Is(err, ErrNoActiveRelationship):
 			return echo.NewHTTPError(http.StatusForbidden, err.Error())
-		case ErrPsychologistRequired:
+		case errors.Is(err, ErrPsychologistRequired):
 			return echo.NewHTTPError(http.StatusForbidden, err.Error())
 		default:
 			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())

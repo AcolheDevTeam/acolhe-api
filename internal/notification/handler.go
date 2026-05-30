@@ -1,6 +1,7 @@
 package notification
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -25,7 +26,7 @@ func (h *Handler) reminder(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	if err := h.svc.EnqueueReminder(c.Request().Context(), req); err != nil {
-		if err == ErrQueueUnavailable {
+		if errors.Is(err, ErrQueueUnavailable) {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "falha ao enfileirar lembrete")

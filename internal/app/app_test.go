@@ -59,7 +59,7 @@ func TestHealth_OK(t *testing.T) {
 	srv := newServer(t, &testsupport.FakeQuerier{})
 	resp, err := http.Get(srv.URL + "/health")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
@@ -70,7 +70,7 @@ func TestHealth_DBDown(t *testing.T) {
 	srv := newServer(t, q)
 	resp, err := http.Get(srv.URL + "/health")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 }
 
@@ -91,7 +91,7 @@ func TestLogin_OK(t *testing.T) {
 	resp, err := http.Post(srv.URL+"/login", "application/json",
 		strings.NewReader(`{"email":"psi@acolhe.dev","password":"segredo123"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var out struct {
@@ -116,7 +116,7 @@ func TestLogin_BadCredentials(t *testing.T) {
 	resp, err := http.Post(srv.URL+"/login", "application/json",
 		strings.NewReader(`{"email":"psi@acolhe.dev","password":"errada"}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
@@ -124,7 +124,7 @@ func TestMe_Unauthorized(t *testing.T) {
 	srv := newServer(t, &testsupport.FakeQuerier{})
 	resp, err := http.Get(srv.URL + "/me")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
@@ -141,7 +141,7 @@ func TestPatients_List(t *testing.T) {
 	}
 	srv := newServer(t, q)
 	resp := serve(srv, authed(t, http.MethodGet, "/patients", "", uuid.New(), orgID))
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var out []map[string]any
@@ -162,7 +162,7 @@ func TestCreateSession_NoActiveRelationship_403(t *testing.T) {
 	srv := newServer(t, q)
 	body := `{"patientId":"` + uuid.New().String() + `","occurredAt":"2026-05-29T10:00:00Z"}`
 	resp := serve(srv, authed(t, http.MethodPost, "/sessions", body, uuid.New(), uuid.New()))
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 }
 
@@ -186,7 +186,7 @@ func TestCreateSession_OK_201(t *testing.T) {
 	srv := newServer(t, q)
 	body := `{"patientId":"` + patientID.String() + `","occurredAt":"2026-05-29T10:00:00Z"}`
 	resp := serve(srv, authed(t, http.MethodPost, "/sessions", body, uuid.New(), uuid.New()))
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusCreated, resp.StatusCode)
 }
 
@@ -202,7 +202,7 @@ func TestCreateAppointment_Conflict_409(t *testing.T) {
 	srv := newServer(t, q)
 	body := `{"patientId":"` + uuid.New().String() + `","scheduledFor":"2026-05-29T10:00:00Z","durationMinutes":50}`
 	resp := serve(srv, authed(t, http.MethodPost, "/appointments", body, uuid.New(), uuid.New()))
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusConflict, resp.StatusCode)
 }
 
@@ -225,6 +225,6 @@ func TestCreateAppointment_OK_201(t *testing.T) {
 	srv := newServer(t, q)
 	body := `{"patientId":"` + uuid.New().String() + `","scheduledFor":"2026-05-29T10:00:00Z","durationMinutes":50}`
 	resp := serve(srv, authed(t, http.MethodPost, "/appointments", body, uuid.New(), uuid.New()))
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusCreated, resp.StatusCode)
 }

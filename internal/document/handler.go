@@ -1,6 +1,7 @@
 package document
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -28,7 +29,7 @@ func (h *Handler) generate(c echo.Context) error {
 	}
 	doc, err := h.svc.GeneratePDF(c.Request().Context(), req)
 	if err != nil {
-		if err == ErrPsychologistRequired {
+		if errors.Is(err, ErrPsychologistRequired) {
 			return echo.NewHTTPError(http.StatusForbidden, err.Error())
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "falha ao gerar documento")

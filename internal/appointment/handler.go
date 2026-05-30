@@ -1,6 +1,7 @@
 package appointment
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -27,10 +28,10 @@ func (h *Handler) create(c echo.Context) error {
 	}
 	a, err := h.svc.Create(c.Request().Context(), req)
 	if err != nil {
-		switch err {
-		case ErrScheduleConflict:
+		switch {
+		case errors.Is(err, ErrScheduleConflict):
 			return echo.NewHTTPError(http.StatusConflict, err.Error())
-		case ErrPsychologistRequired:
+		case errors.Is(err, ErrPsychologistRequired):
 			return echo.NewHTTPError(http.StatusForbidden, err.Error())
 		default:
 			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
@@ -42,7 +43,7 @@ func (h *Handler) create(c echo.Context) error {
 func (h *Handler) list(c echo.Context) error {
 	appointments, err := h.svc.List(c.Request().Context())
 	if err != nil {
-		if err == ErrPsychologistRequired {
+		if errors.Is(err, ErrPsychologistRequired) {
 			return echo.NewHTTPError(http.StatusForbidden, err.Error())
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "erro ao listar agenda")

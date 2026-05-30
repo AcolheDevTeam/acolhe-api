@@ -1,6 +1,7 @@
 package patient
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -28,10 +29,10 @@ func (h *Handler) requestExport(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "id inválido")
 	}
 	if err := h.svc.RequestExport(c.Request().Context(), id); err != nil {
-		switch err {
-		case ErrNotFound:
+		switch {
+		case errors.Is(err, ErrNotFound):
 			return echo.NewHTTPError(http.StatusNotFound, err.Error())
-		case ErrQueueUnavailable:
+		case errors.Is(err, ErrQueueUnavailable):
 			return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
 		default:
 			return echo.NewHTTPError(http.StatusInternalServerError, "falha ao solicitar exportação")

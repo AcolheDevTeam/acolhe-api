@@ -1,6 +1,7 @@
 package activity
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -30,7 +31,7 @@ func (h *Handler) submitResponse(c echo.Context) error {
 	}
 	resp, err := h.svc.Submit(c.Request().Context(), assignmentID)
 	if err != nil {
-		if err == ErrAssignmentNotFound {
+		if errors.Is(err, ErrAssignmentNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, err.Error())
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "falha ao submeter resposta")
@@ -45,7 +46,7 @@ func (h *Handler) listResponses(c echo.Context) error {
 	}
 	resps, err := h.svc.ListResponses(c.Request().Context(), assignmentID)
 	if err != nil {
-		if err == ErrAssignmentNotFound {
+		if errors.Is(err, ErrAssignmentNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, err.Error())
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "erro ao listar respostas")

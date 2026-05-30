@@ -1,6 +1,7 @@
 package checkin
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -28,10 +29,10 @@ func (h *Handler) create(c echo.Context) error {
 	}
 	ch, err := h.svc.Create(c.Request().Context(), req)
 	if err != nil {
-		switch err {
-		case ErrInvalidMood:
+		switch {
+		case errors.Is(err, ErrInvalidMood):
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
-		case ErrPatientNotInOrg:
+		case errors.Is(err, ErrPatientNotInOrg):
 			return echo.NewHTTPError(http.StatusNotFound, err.Error())
 		default:
 			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())

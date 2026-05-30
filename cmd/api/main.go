@@ -28,7 +28,7 @@ func main() {
 	queries := db.New(pool)
 
 	redis := queue.Connect(cfg.RedisAddr)
-	defer redis.Close()
+	defer func() { _ = redis.Close() }()
 
 	application := app.New(pool, queries, redis, cfg.JWTSecret)
 

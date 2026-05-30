@@ -1,4 +1,4 @@
-.PHONY: run build tidy dev generate migrate apply lint dev-schema seed db-up
+.PHONY: run build tidy dev generate migrate apply lint dev-schema seed db-up golangci sec trivy semgrep check
 
 # ---------- App ----------
 
@@ -53,3 +53,27 @@ dev-schema: migrate generate
 # Sobe Postgres + Redis (ver docker-compose.yml).
 db-up:
 	docker compose up -d
+
+# ---------- Qualidade / análise estática (ver .github/workflows/ci.yml) ----------
+
+# Análise estática agregada de Go (inclui gosec). Requer golangci-lint instalado:
+#   go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+# Obs: o alvo `lint` acima é o lint de migrations (Atlas); este é o de código Go.
+golangci:
+	golangci-lint run ./...
+
+# Apenas o scanner de segurança gosec (subset do que o lint roda).
+sec:
+	golangci-lint run --no-config --default=none --enable=gosec ./...
+
+# Scanner de vulnerabilidades, misconfigs e secrets (requer trivy instalado).
+trivy:
+	trivy fs --scanners vuln,misconfig,secret --severity CRITICAL,HIGH --ignore-unfixed .
+
+# Regras Semgrep de isolamento multi-tenant (requer semgrep instalado).
+semgrep:
+	semgrep --config .semgrep/ --error
+
+# Roda o pacote completo de quality gate localmente.
+check: golangci trivy semgrep
+	go build ./... && go test ./...

@@ -1,0 +1,22 @@
+# Regras Semgrep para reforçar o isolamento multi-tenant (seção 6 da spec).
+# Complementa as RLS policies (migrations/0002_rls.sql): falha se uma query
+# ad-hoc em Go acessar tabelas tenant-scoped sem filtrar por organization_id.
+#
+# Rodar: semgrep --config .semgrep/
+# Nota: queries geradas pelo sqlc (em internal/store/) são ignoradas — a
+# garantia ali vem do .sql versionado em query/, revisado manualmente.
+rules:
+  - id: query-sem-organization-id
+    languages: [go]
+    severity: WARNING
+    message: >
+      Query em tabela tenant-scoped sem filtro explícito por organization_id.
+      Toda leitura/escrita multi-tenant deve carregar organization_id (defense
+      in depth sobre as RLS policies). Se for intencional, justifique no PR.
+    paths:
+      exclude:
+        - internal/store/
+        - "*_test.go"
+    patterns:
+      - pattern-regex: '(?i)(select|update|delete)[\s\S]*?\b(patient_profile|appointment|clinical_note|organization_member)\b'
+      - pattern-not-regex: '(?i)organization_id'

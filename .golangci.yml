@@ -1,0 +1,61 @@
+# Configuração do golangci-lint (formato v2) para a acolhe-api.
+# Agregador de linters + gosec como quality gate de PR (ver .github/workflows/ci.yml).
+# Docs: https://golangci-lint.run/
+version: "2"
+
+run:
+  # Build tags usadas pelo projeto, se houver.
+  build-tags: []
+  # Falha se a própria config estiver desatualizada/inválida.
+  allow-parallel-runners: true
+
+linters:
+  # Linters habilitados além do conjunto default (govet, ineffassign,
+  # staticcheck, unused, errcheck já vêm no default do v2).
+  enable:
+    - gosec        # scanner de segurança (AST, regras OWASP Top 10) — requisito LGPD
+    - bodyclose    # garante fechamento de http.Response.Body
+    - errorlint    # uso correto de errors.Is/As e %w
+    - sqlclosecheck # garante Close() em rows/statements
+    - rowserrcheck  # checa rows.Err() após iteração
+    - revive       # substituto do golint, regras de estilo
+    - unconvert    # conversões desnecessárias
+    - unparam      # parâmetros não utilizados
+
+  settings:
+    gosec:
+      # Mantém todas as regras; ajuste excludes pontualmente se necessário.
+      excludes: []
+    revive:
+      rules:
+        # Codebase em português: não exigir doc-comments no estilo Go/inglês.
+        - name: exported
+          disabled: true
+
+  exclusions:
+    generated: lax
+    rules:
+      # Código gerado pelo sqlc fica em internal/db/generated/ —
+      # não faz sentido lintar saída de gerador.
+      - path: internal/db/generated/
+        linters:
+          - all
+      # Em testes, asserts de segurança do gosec geram ruído.
+      - path: _test\.go
+        linters:
+          - gosec
+          - unparam
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/joycesilva/acolhe-api
+
+issues:
+  # Reporta todas as ocorrências (não limita por linha/arquivo).
+  max-issues-per-linter: 0
+  max-same-issues: 0

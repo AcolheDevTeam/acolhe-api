@@ -2,41 +2,40 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/joycesilva/acolhe-api/internal/app"
 	"github.com/joycesilva/acolhe-api/internal/config"
-	"github.com/joycesilva/acolhe-api/internal/db"
-	"github.com/joycesilva/acolhe-api/internal/httpapi"
+	"github.com/joycesilva/acolhe-api/internal/database"
+	db "github.com/joycesilva/acolhe-api/internal/db/generated"
+	"github.com/joycesilva/acolhe-api/internal/queue"
 )
 
 func main() {
 	cfg := config.Load()
 
-	pool, err := db.Connect(context.Background(), cfg.DatabaseURL)
+	// pool → db.New(pool) → queue.Connect() → app.New(...) → app.Start (spec §4.5).
+	pool, err := database.Connect(context.Background(), cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("db: %v", err)
 	}
 	defer pool.Close()
 
-	server := httpapi.New(pool, cfg.JWTSecret)
+	queries := db.New(pool)
 
-	srv := &http.Server{
-		Addr:         ":" + cfg.Port,
-		Handler:      server.Routes(),
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 15 * time.Second,
-	}
+	redis := queue.Connect(cfg.RedisAddr)
+	defer redis.Close()
+
+	application := app.New(pool, queries, redis, cfg.JWTSecret)
 
 	go func() {
 		log.Printf("acolhe-api ouvindo em :%s", cfg.Port)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("http: %v", err)
+		if err := application.Start(":" + cfg.Port); err != nil {
+			log.Printf("http: %v", err)
 		}
 	}()
 
@@ -46,7 +45,7 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := application.Shutdown(ctx); err != nil {
 		log.Printf("shutdown: %v", err)
 	}
 	log.Println("encerrado")

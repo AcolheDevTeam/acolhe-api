@@ -11,7 +11,7 @@ import (
 
 	"github.com/joycesilva/acolhe-api/internal/auth"
 	"github.com/joycesilva/acolhe-api/internal/config"
-	"github.com/joycesilva/acolhe-api/internal/db"
+	"github.com/joycesilva/acolhe-api/internal/database"
 )
 
 const (
@@ -23,7 +23,7 @@ func main() {
 	cfg := config.Load()
 	ctx := context.Background()
 
-	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	pool, err := database.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("db: %v", err)
 	}

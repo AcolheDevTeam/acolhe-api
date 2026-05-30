@@ -3,8 +3,8 @@
 # ad-hoc em Go acessar tabelas tenant-scoped sem filtrar por organization_id.
 #
 # Rodar: semgrep --config .semgrep/
-# Nota: queries geradas pelo sqlc (em internal/store/) são ignoradas — a
-# garantia ali vem do .sql versionado em query/, revisado manualmente.
+# Nota: queries geradas pelo sqlc (em internal/db/generated/) são ignoradas — a
+# garantia ali vem do .sql versionado em internal/db/queries/, revisado manualmente.
 rules:
   - id: query-sem-organization-id
     languages: [go]
@@ -15,8 +15,8 @@ rules:
       in depth sobre as RLS policies). Se for intencional, justifique no PR.
     paths:
       exclude:
-        - internal/store/
-        - "*_test.go"
+        - /internal/db/generated/
+        - "**/*_test.go"
     patterns:
       - pattern-regex: '(?i)(select|update|delete)[\s\S]*?\b(patient_profile|appointment|clinical_note|organization_member)\b'
       - pattern-not-regex: '(?i)organization_id'

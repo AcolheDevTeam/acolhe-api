@@ -1,0 +1,14 @@
+# segredos / credenciais — NUNCA commitar
+oci_api_key.pem
+oci_api_key_public.pem
+terraform.tfvars
+
+# estado e cache do terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+*.log
+*.local.sh
+*.env

@@ -1,0 +1,83 @@
+# Stack de deploy (roda na VM Oracle). A imagem já vem pronta do GHCR —
+# a VM NÃO compila nada, só puxa e roda. Uma cópia deste arquivo roda em
+# cada VM (staging e prod); os segredos ficam no .env ao lado (chmod 600).
+name: acolhe
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # tuning p/ VM de 1GB de RAM
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=128MB"
+      - "-c"
+      - "max_connections=50"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # sem `ports:` — Postgres fica só na rede interna do compose, nunca exposto
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    # sem `ports:` — Redis fica só na rede interna
+
+  # Aplica migrations pendentes (Atlas) antes da API/worker subirem. Roda e sai.
+  migrate:
+    image: ${IMAGE}
+    pull_policy: always
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["atlas", "migrate", "apply", "--dir", "file:///migrations", "--url", "${DATABASE_URL}"]
+
+  api:
+    image: ${IMAGE}
+    pull_policy: always
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      PORT: "8080"
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_ADDR: redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+    ports:
+      - "80:8080" # sem domínio ainda → HTTP na porta 80. TLS (Caddy/nip.io) depois.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    image: ${IMAGE}
+    pull_policy: always
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+    entrypoint: ["worker"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_ADDR: redis:6379
+
+volumes:
+  pgdata:

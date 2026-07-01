@@ -3,3 +3,11 @@
 *.exe
 .env
 vendor/
+
+# infra (Terraform/OCI) — segredos e estado nunca vão pro git
+infra/*.pem
+infra/terraform.tfvars
+infra/*.tfstate
+infra/*.tfstate.*
+infra/.terraform/
+infra/*.log

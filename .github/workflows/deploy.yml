@@ -16,8 +16,16 @@ permissions:
   packages: write
 
 jobs:
+  # Gate: roda o CI completo (lint/test/trivy/semgrep). Se falhar, nada é deployado.
+  ci:
+    name: CI (gate)
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   build-push:
     name: Build & push (GHCR)
+    needs: ci
     runs-on: ubuntu-latest
     outputs:
       repo: ${{ steps.meta.outputs.repo }}

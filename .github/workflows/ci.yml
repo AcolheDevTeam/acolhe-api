@@ -1,12 +1,12 @@
 name: CI
 
-# Quality gate de PR: análise estática (golangci-lint + gosec) e
-# scanner de vulnerabilidades (Trivy). Bloqueia merge se qualquer step falhar.
+# Quality gate: análise estática (golangci-lint + gosec) e scanner de
+# vulnerabilidades (Trivy). Roda em PRs e é chamado pelo Deploy (workflow_call)
+# como pré-requisito: só builda/deploya se o CI passar.
 on:
   pull_request:
-    branches: [main]
-  push:
-    branches: [main]
+    branches: [main, develop]
+  workflow_call:
 
 permissions:
   contents: read

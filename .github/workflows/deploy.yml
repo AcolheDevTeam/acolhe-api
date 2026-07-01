@@ -88,15 +88,18 @@ jobs:
           # GITHUB_TOKEN tem packages:read e vale durante o job — dispensa PAT.
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # domínio do Caddy derivado do IP da VM (nip.io) — sem precisar de domínio próprio.
+          CADDY_DOMAIN: ${{ secrets.SSH_HOST }}.nip.io
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          envs: GHCR_USER,GHCR_TOKEN
+          envs: GHCR_USER,GHCR_TOKEN,CADDY_DOMAIN
           script: |
             set -euo pipefail
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             cd /home/ubuntu/acolhe
+            export CADDY_DOMAIN
             docker compose --env-file .env pull
             docker compose --env-file .env up -d --remove-orphans
             docker logout ghcr.io

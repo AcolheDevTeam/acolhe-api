@@ -57,8 +57,7 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_ADDR: redis:6379
       JWT_SECRET: ${JWT_SECRET}
-    ports:
-      - "80:8080" # sem domínio ainda → HTTP na porta 80. TLS (Caddy/nip.io) depois.
+    # sem `ports:` — quem expõe pra internet é o Caddy (HTTPS). A API fica interna.
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 30s
@@ -79,5 +78,23 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_ADDR: redis:6379
 
+  # Reverse proxy com HTTPS automático (Let's Encrypt/ZeroSSL) para ${CADDY_DOMAIN}.
+  # CADDY_DOMAIN é injetado pelo workflow de deploy a partir do IP (ex.: 1.2.3.4.nip.io).
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    command: caddy reverse-proxy --from ${CADDY_DOMAIN:-localhost} --to api:8080
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data # certificados — persistir evita re-emitir (rate limit)
+      - caddy_config:/config
+
 volumes:
   pgdata:
+  caddy_data:
+  caddy_config:

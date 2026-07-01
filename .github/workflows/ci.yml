@@ -1,11 +1,13 @@
 name: CI
 
 # Quality gate: análise estática (golangci-lint + gosec) e scanner de
-# vulnerabilidades (Trivy). Roda em PRs e é chamado pelo Deploy (workflow_call)
-# como pré-requisito: só builda/deploya se o CI passar.
+# vulnerabilidades (Trivy). Roda em PRs pra develop (validar feature branches) e
+# é chamado pelo Deploy (workflow_call) como gate em pushes de develop/main.
+# Não roda em PRs pra main: o commit já foi testado pelo gate no push da develop,
+# então rodar de novo no PR de promoção develop→main seria duplicado.
 on:
   pull_request:
-    branches: [main, develop]
+    branches: [develop]
   workflow_call:
 
 permissions:

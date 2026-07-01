@@ -23,6 +23,9 @@ COPY --from=build /out/api /out/worker /usr/local/bin/
 COPY --from=atlas /usr/local/bin/atlas /usr/local/bin/atlas
 # migrations + atlas.sum embutidos p/ o serviço `migrate` do compose
 COPY internal/db/migrations /migrations
+# roda como usuário não-root (Trivy DS-0002 / boa prática de container)
+RUN addgroup -S app && adduser -S -G app app
+USER app
 EXPOSE 8080
 # entrypoint padrão = API. O compose troca p/ `worker` ou `atlas` conforme o serviço.
 ENTRYPOINT ["api"]

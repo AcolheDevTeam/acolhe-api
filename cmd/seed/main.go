@@ -1,6 +1,9 @@
 // Comando de seed: cria uma organização, um usuário psicólogo e pacientes de
 // exemplo. Idempotente — usa upsert pelo e-mail. Imprime as credenciais no fim.
 //
+// As credenciais vêm de SEED_EMAIL/SEED_PASSWORD (com defaults de demo). Em
+// produção, passe valores fortes: SEED_EMAIL=... SEED_PASSWORD=... ./cmd/seed
+//
 //	go run ./cmd/seed
 package main
 
@@ -8,18 +11,26 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/joycesilva/acolhe-api/internal/auth"
 	"github.com/joycesilva/acolhe-api/internal/config"
 	"github.com/joycesilva/acolhe-api/internal/database"
 )
 
-const (
-	seedEmail    = "psi@acolhe.dev"
-	seedPassword = "acolhe123"
-)
+// getenv retorna o valor da env var ou um fallback.
+func getenv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
 
 func main() {
+	// defaults de demo (ok para staging); sobrescreva em prod via env.
+	seedEmail := getenv("SEED_EMAIL", "psi@acolhe.dev")
+	seedPassword := getenv("SEED_PASSWORD", "acolhe123")
+
 	cfg := config.Load()
 	ctx := context.Background()
 

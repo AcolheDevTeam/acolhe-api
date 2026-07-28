@@ -11,6 +11,7 @@ import (
 )
 
 type Querier interface {
+	ClaimAssignmentForSubmission(ctx context.Context, arg ClaimAssignmentForSubmissionParams) (int64, error)
 	// Conta agendamentos do psicólogo cujo intervalo se sobrepõe à janela informada.
 	// tstzrange(...) && tstzrange(...) testa interseção de intervalos.
 	// O service calcula window_end = scheduled_for + duration; assim a query só recebe timestamptz.
@@ -19,15 +20,21 @@ type Querier interface {
 	CreateAssignment(ctx context.Context, arg CreateAssignmentParams) (CreateAssignmentRow, error)
 	// Isolamento de org garantido pela checagem do paciente na mesma org (no service).
 	CreateCheckin(ctx context.Context, arg CreateCheckinParams) (Checkin, error)
+	CreateClinicalRecord(ctx context.Context, arg CreateClinicalRecordParams) error
 	CreateDocument(ctx context.Context, arg CreateDocumentParams) (CreateDocumentRow, error)
-	CreatePatient(ctx context.Context, arg CreatePatientParams) (CreatePatientRow, error)
+	CreatePatient(ctx context.Context, arg CreatePatientParams) error
+	CreatePatientRelationship(ctx context.Context, arg CreatePatientRelationshipParams) error
 	CreateSession(ctx context.Context, arg CreateSessionParams) (CreateSessionRow, error)
 	// patient_relationship não tem organization_id; o isolamento de org é feito
 	// pelo join em patient_profile (que carrega organization_id).
 	GetActiveRelationship(ctx context.Context, arg GetActiveRelationshipParams) (GetActiveRelationshipRow, error)
+	GetActivityTemplateInOrg(ctx context.Context, arg GetActivityTemplateInOrgParams) (GetActivityTemplateInOrgRow, error)
+	GetAssignmentDetailInOrg(ctx context.Context, arg GetAssignmentDetailInOrgParams) (GetAssignmentDetailInOrgRow, error)
 	// Confirma que o assignment existe e pertence à organização (via paciente).
 	GetAssignmentInOrg(ctx context.Context, arg GetAssignmentInOrgParams) (GetAssignmentInOrgRow, error)
 	GetPatient(ctx context.Context, arg GetPatientParams) (GetPatientRow, error)
+	GetPatientByUserInOrg(ctx context.Context, arg GetPatientByUserInOrgParams) (GetPatientByUserInOrgRow, error)
+	GetPatientForPsychologist(ctx context.Context, arg GetPatientForPsychologistParams) (GetPatientForPsychologistRow, error)
 	// Timeline unificada do paciente: sessões + agendamentos + atividades.
 	// Isolamento multi-tenant via patient_profile.organization_id em cada ramo do UNION.
 	GetPatientTimeline(ctx context.Context, arg GetPatientTimelineParams) ([]GetPatientTimelineRow, error)
@@ -35,6 +42,7 @@ type Querier interface {
 	GetSession(ctx context.Context, arg GetSessionParams) (GetSessionRow, error)
 	// Isolamento multi-tenant via patient_profile.organization_id.
 	GetSessionsByPatient(ctx context.Context, arg GetSessionsByPatientParams) ([]GetSessionsByPatientRow, error)
+	GetSessionsByPsychologist(ctx context.Context, arg GetSessionsByPsychologistParams) ([]GetSessionsByPsychologistRow, error)
 	GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow, error)
 	HealthCheck(ctx context.Context) (int32, error)
@@ -42,10 +50,13 @@ type Querier interface {
 	ListActivityTemplates(ctx context.Context, organizationID *uuid.UUID) ([]ListActivityTemplatesRow, error)
 	ListAppointmentsByPsychologist(ctx context.Context, arg ListAppointmentsByPsychologistParams) ([]ListAppointmentsByPsychologistRow, error)
 	ListAssignmentsByPatient(ctx context.Context, arg ListAssignmentsByPatientParams) ([]ListAssignmentsByPatientRow, error)
+	ListAssignmentsByPsychologist(ctx context.Context, arg ListAssignmentsByPsychologistParams) ([]ListAssignmentsByPsychologistRow, error)
 	ListCheckinsByPatient(ctx context.Context, arg ListCheckinsByPatientParams) ([]Checkin, error)
 	ListDocumentsByPatient(ctx context.Context, arg ListDocumentsByPatientParams) ([]ListDocumentsByPatientRow, error)
 	ListPatientsByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListPatientsByOrgRow, error)
+	ListPatientsByPsychologist(ctx context.Context, arg ListPatientsByPsychologistParams) ([]ListPatientsByPsychologistRow, error)
 	ListResponsesByAssignment(ctx context.Context, assignmentID uuid.UUID) ([]ListResponsesByAssignmentRow, error)
+	MarkAssignmentReviewed(ctx context.Context, arg MarkAssignmentReviewedParams) (int64, error)
 	MarkAssignmentSubmitted(ctx context.Context, id uuid.UUID) error
 	// Confirma que o paciente pertence à organização (usado antes de criar check-in).
 	PatientInOrg(ctx context.Context, arg PatientInOrgParams) (bool, error)

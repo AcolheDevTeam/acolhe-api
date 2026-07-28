@@ -12,6 +12,28 @@ import (
 	"github.com/google/uuid"
 )
 
+const createClinicalRecord = `-- name: CreateClinicalRecord :exec
+INSERT INTO clinical_record (session_id, patient_id, psychologist_id, content_jsonb)
+VALUES ($1, $2, $3, jsonb_build_object('notes', $4::text))
+`
+
+type CreateClinicalRecordParams struct {
+	SessionID      uuid.UUID `json:"session_id"`
+	PatientID      uuid.UUID `json:"patient_id"`
+	PsychologistID uuid.UUID `json:"psychologist_id"`
+	Notes          string    `json:"notes"`
+}
+
+func (q *Queries) CreateClinicalRecord(ctx context.Context, arg CreateClinicalRecordParams) error {
+	_, err := q.db.Exec(ctx, createClinicalRecord,
+		arg.SessionID,
+		arg.PatientID,
+		arg.PsychologistID,
+		arg.Notes,
+	)
+	return err
+}
+
 const createSession = `-- name: CreateSession :one
 INSERT INTO session (patient_id, psychologist_id, occurred_at, status)
 VALUES ($1, $2, $3, $4)
@@ -95,67 +117,88 @@ func (q *Queries) GetActiveRelationship(ctx context.Context, arg GetActiveRelati
 }
 
 const getSession = `-- name: GetSession :one
-SELECT s.id, s.patient_id, s.psychologist_id, s.occurred_at, s.status, s.created_at
+SELECT s.id, s.patient_id, p.full_name AS patient_name, s.psychologist_id,
+       s.occurred_at, s.status, s.created_at,
+       CAST(COALESCE(cr.content_jsonb->>'notes', '') AS text) AS notes,
+       a.modality, a.duration_minutes
 FROM session s
 JOIN patient_profile p ON p.id = s.patient_id
+LEFT JOIN clinical_record cr ON cr.session_id = s.id
+LEFT JOIN appointment a ON a.id = s.appointment_id
 WHERE s.id = $1
-  AND p.organization_id = $2
+  AND s.psychologist_id = $2
+  AND p.organization_id = $3
 `
 
 type GetSessionParams struct {
 	ID             uuid.UUID `json:"id"`
+	PsychologistID uuid.UUID `json:"psychologist_id"`
 	OrganizationID uuid.UUID `json:"organization_id"`
 }
 
 type GetSessionRow struct {
-	ID             uuid.UUID `json:"id"`
-	PatientID      uuid.UUID `json:"patient_id"`
-	PsychologistID uuid.UUID `json:"psychologist_id"`
-	OccurredAt     time.Time `json:"occurred_at"`
-	Status         string    `json:"status"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID              uuid.UUID `json:"id"`
+	PatientID       uuid.UUID `json:"patient_id"`
+	PatientName     string    `json:"patient_name"`
+	PsychologistID  uuid.UUID `json:"psychologist_id"`
+	OccurredAt      time.Time `json:"occurred_at"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+	Notes           string    `json:"notes"`
+	Modality        *string   `json:"modality"`
+	DurationMinutes *int32    `json:"duration_minutes"`
 }
 
 func (q *Queries) GetSession(ctx context.Context, arg GetSessionParams) (GetSessionRow, error) {
-	row := q.db.QueryRow(ctx, getSession, arg.ID, arg.OrganizationID)
+	row := q.db.QueryRow(ctx, getSession, arg.ID, arg.PsychologistID, arg.OrganizationID)
 	var i GetSessionRow
 	err := row.Scan(
 		&i.ID,
 		&i.PatientID,
+		&i.PatientName,
 		&i.PsychologistID,
 		&i.OccurredAt,
 		&i.Status,
 		&i.CreatedAt,
+		&i.Notes,
+		&i.Modality,
+		&i.DurationMinutes,
 	)
 	return i, err
 }
 
 const getSessionsByPatient = `-- name: GetSessionsByPatient :many
-SELECT s.id, s.patient_id, s.psychologist_id, s.occurred_at, s.status, s.created_at
+SELECT s.id, s.patient_id, s.psychologist_id, s.occurred_at, s.status, s.created_at,
+       a.modality, a.duration_minutes
 FROM session s
 JOIN patient_profile p ON p.id = s.patient_id
+LEFT JOIN appointment a ON a.id = s.appointment_id
 WHERE s.patient_id = $1
-  AND p.organization_id = $2
+  AND s.psychologist_id = $2
+  AND p.organization_id = $3
 ORDER BY s.occurred_at DESC
 `
 
 type GetSessionsByPatientParams struct {
 	PatientID      uuid.UUID `json:"patient_id"`
+	PsychologistID uuid.UUID `json:"psychologist_id"`
 	OrganizationID uuid.UUID `json:"organization_id"`
 }
 
 type GetSessionsByPatientRow struct {
-	ID             uuid.UUID `json:"id"`
-	PatientID      uuid.UUID `json:"patient_id"`
-	PsychologistID uuid.UUID `json:"psychologist_id"`
-	OccurredAt     time.Time `json:"occurred_at"`
-	Status         string    `json:"status"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID              uuid.UUID `json:"id"`
+	PatientID       uuid.UUID `json:"patient_id"`
+	PsychologistID  uuid.UUID `json:"psychologist_id"`
+	OccurredAt      time.Time `json:"occurred_at"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+	Modality        *string   `json:"modality"`
+	DurationMinutes *int32    `json:"duration_minutes"`
 }
 
 // Isolamento multi-tenant via patient_profile.organization_id.
 func (q *Queries) GetSessionsByPatient(ctx context.Context, arg GetSessionsByPatientParams) ([]GetSessionsByPatientRow, error) {
-	rows, err := q.db.Query(ctx, getSessionsByPatient, arg.PatientID, arg.OrganizationID)
+	rows, err := q.db.Query(ctx, getSessionsByPatient, arg.PatientID, arg.PsychologistID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +213,67 @@ func (q *Queries) GetSessionsByPatient(ctx context.Context, arg GetSessionsByPat
 			&i.OccurredAt,
 			&i.Status,
 			&i.CreatedAt,
+			&i.Modality,
+			&i.DurationMinutes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getSessionsByPsychologist = `-- name: GetSessionsByPsychologist :many
+SELECT s.id, s.patient_id, p.full_name AS patient_name, s.psychologist_id,
+       s.occurred_at, s.status, s.created_at,
+       a.modality, a.duration_minutes
+FROM session s
+JOIN patient_profile p ON p.id = s.patient_id
+LEFT JOIN appointment a ON a.id = s.appointment_id
+WHERE p.organization_id = $1
+  AND s.psychologist_id = $2
+ORDER BY s.occurred_at DESC
+`
+
+type GetSessionsByPsychologistParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	PsychologistID uuid.UUID `json:"psychologist_id"`
+}
+
+type GetSessionsByPsychologistRow struct {
+	ID              uuid.UUID `json:"id"`
+	PatientID       uuid.UUID `json:"patient_id"`
+	PatientName     string    `json:"patient_name"`
+	PsychologistID  uuid.UUID `json:"psychologist_id"`
+	OccurredAt      time.Time `json:"occurred_at"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+	Modality        *string   `json:"modality"`
+	DurationMinutes *int32    `json:"duration_minutes"`
+}
+
+func (q *Queries) GetSessionsByPsychologist(ctx context.Context, arg GetSessionsByPsychologistParams) ([]GetSessionsByPsychologistRow, error) {
+	rows, err := q.db.Query(ctx, getSessionsByPsychologist, arg.OrganizationID, arg.PsychologistID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetSessionsByPsychologistRow
+	for rows.Next() {
+		var i GetSessionsByPsychologistRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PatientID,
+			&i.PatientName,
+			&i.PsychologistID,
+			&i.OccurredAt,
+			&i.Status,
+			&i.CreatedAt,
+			&i.Modality,
+			&i.DurationMinutes,
 		); err != nil {
 			return nil, err
 		}

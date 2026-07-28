@@ -130,17 +130,24 @@ func TestMe_Unauthorized(t *testing.T) {
 
 func TestPatients_List(t *testing.T) {
 	orgID := uuid.New()
+	userID := uuid.New()
+	psyID := uuid.New()
 	q := &testsupport.FakeQuerier{
-		ListPatientsByOrgFn: func(_ context.Context, gotOrg uuid.UUID) ([]db.ListPatientsByOrgRow, error) {
-			assert.Equal(t, orgID, gotOrg) // tenant injetou o orgId correto
-			return []db.ListPatientsByOrgRow{
+		GetPsychologistByUserFn: func(_ context.Context, gotUser uuid.UUID) (db.GetPsychologistByUserRow, error) {
+			assert.Equal(t, userID, gotUser)
+			return db.GetPsychologistByUserRow{ID: psyID}, nil
+		},
+		ListPatientsByPsychFn: func(_ context.Context, arg db.ListPatientsByPsychologistParams) ([]db.ListPatientsByPsychologistRow, error) {
+			assert.Equal(t, orgID, arg.OrganizationID)
+			assert.Equal(t, psyID, arg.PsychologistID)
+			return []db.ListPatientsByPsychologistRow{
 				{ID: uuid.New(), FullName: "Ana", Status: "active", CreatedAt: time.Now()},
 				{ID: uuid.New(), FullName: "Bruno", Status: "active", CreatedAt: time.Now()},
 			}, nil
 		},
 	}
 	srv := newServer(t, q)
-	resp := serve(srv, authed(t, http.MethodGet, "/patients", "", uuid.New(), orgID))
+	resp := serve(srv, authed(t, http.MethodGet, "/patients", "", userID, orgID))
 	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -160,7 +167,7 @@ func TestCreateSession_NoActiveRelationship_403(t *testing.T) {
 		},
 	}
 	srv := newServer(t, q)
-	body := `{"patientId":"` + uuid.New().String() + `","occurredAt":"2026-05-29T10:00:00Z"}`
+	body := `{"patientId":"` + uuid.New().String() + `","occurredAt":"2026-05-29T10:00:00Z","notes":"Evolução"}`
 	resp := serve(srv, authed(t, http.MethodPost, "/sessions", body, uuid.New(), uuid.New()))
 	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
@@ -184,7 +191,7 @@ func TestCreateSession_OK_201(t *testing.T) {
 		},
 	}
 	srv := newServer(t, q)
-	body := `{"patientId":"` + patientID.String() + `","occurredAt":"2026-05-29T10:00:00Z"}`
+	body := `{"patientId":"` + patientID.String() + `","occurredAt":"2026-05-29T10:00:00Z","notes":"Evolução"}`
 	resp := serve(srv, authed(t, http.MethodPost, "/sessions", body, uuid.New(), uuid.New()))
 	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusCreated, resp.StatusCode)

@@ -54,6 +54,23 @@ services:
       - redisdata:/data
     # sem `ports:` — Redis fica só na rede interna
 
+  # Garante que API e worker usem um role sem BYPASSRLS. É idempotente e também
+  # atualiza grants para bancos já existentes antes de aplicar novas migrations.
+  db-role:
+    image: postgres:16-alpine
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD}
+    entrypoint: ["sh", "/scripts/configure-app-role.sh"]
+    volumes:
+      - ./postgres-init:/scripts:ro
+
   # Aplica migrations pendentes (Atlas) antes da API/worker subirem. Roda e sai.
   migrate:
     image: ${IMAGE}
@@ -62,6 +79,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      db-role:
+        condition: service_completed_successfully
     entrypoint: ["atlas", "migrate", "apply", "--dir", "file:///migrations", "--url", "${DATABASE_URL}"]
 
   api:
@@ -75,7 +94,7 @@ services:
         condition: service_completed_successfully
     environment:
       PORT: "8080"
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${APP_DATABASE_URL}
       REDIS_ADDR: redis:6379
       JWT_SECRET: ${JWT_SECRET}
     # sem `ports:` — quem expõe pra internet é o Caddy (HTTPS). A API fica interna.
@@ -96,7 +115,7 @@ services:
         condition: service_completed_successfully
     entrypoint: ["worker"]
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${APP_DATABASE_URL}
       REDIS_ADDR: redis:6379
 
   # Reverse proxy com HTTPS automático (Let's Encrypt/ZeroSSL) para ${CADDY_DOMAIN}.

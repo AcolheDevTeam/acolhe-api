@@ -109,6 +109,6 @@ Concluído e verificado (build/vet/test + integração com Docker):
 Pendente (refinamentos): valores tipados de resposta (`activity_response_value`),
 render real de PDF (infra/S3), listagem de templates de documento e de notificações.
 
-> RLS efetivo exige que a aplicação conecte com um **role não-superusuário** (o
-> superusuário do Postgres faz BYPASS de RLS). O mecanismo de app (SET LOCAL por tx)
-> está pronto; criar/usar o role `acolhe_app` é passo de deploy.
+> No deploy, migrations usam o dono do schema e API/worker usam `acolhe_app`,
+> um role `NOSUPERUSER NOBYPASSRLS` configurado idempotentemente antes das
+> migrations. O middleware aplica o contexto `acolhe.*` em cada transação.

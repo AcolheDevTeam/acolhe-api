@@ -78,7 +78,7 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          source: deploy/docker-compose.yml,deploy/backup
+          source: deploy/docker-compose.yml,deploy/backup,deploy/postgres-init
           target: /home/ubuntu/acolhe
           strip_components: 1
 

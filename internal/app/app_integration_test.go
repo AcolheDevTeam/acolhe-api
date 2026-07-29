@@ -273,3 +273,108 @@ func TestClinicalBFFContracts_FullStack(t *testing.T) {
 	assert.Equal(t, 1, visibleSessions)
 	assert.Equal(t, 1, visibleRecords)
 }
+
+func TestRLSMetadataAndTenantIsolation(t *testing.T) {
+	ctx := context.Background()
+	pool := setupPool(t)
+
+	rlsTables := []string{
+		"appointment",
+		"clinical_record",
+		"documentary_record",
+		"patient_profile",
+		"session",
+	}
+	var enabledTables int
+	require.NoError(t, pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM pg_class
+		WHERE relnamespace = 'public'::regnamespace
+		  AND relname = ANY($1::text[])
+		  AND relrowsecurity`, rlsTables).Scan(&enabledTables))
+	assert.Equal(t, len(rlsTables), enabledTables, "todas as tabelas clínicas declaradas devem ter RLS")
+
+	var tablesWithPolicies int
+	require.NoError(t, pool.QueryRow(ctx, `
+		SELECT count(DISTINCT tablename)
+		FROM pg_policies
+		WHERE schemaname = 'public'
+		  AND tablename = ANY($1::text[])`, rlsTables).Scan(&tablesWithPolicies))
+	assert.Equal(t, len(rlsTables), tablesWithPolicies, "RLS sem policy nega o domínio inteiro")
+
+	type tenantFixture struct {
+		orgID     uuid.UUID
+		userID    uuid.UUID
+		psyID     uuid.UUID
+		patientID uuid.UUID
+		sessionID uuid.UUID
+	}
+	createTenant := func(slug string) tenantFixture {
+		t.Helper()
+		var fixture tenantFixture
+		require.NoError(t, pool.QueryRow(ctx,
+			`INSERT INTO organization (name, slug) VALUES ($1, $2) RETURNING id`,
+			"Organization "+slug, slug).Scan(&fixture.orgID))
+		require.NoError(t, pool.QueryRow(ctx,
+			`INSERT INTO "user" (organization_id, email, password_hash, role)
+			 VALUES ($1, $2, 'x', 'psychologist') RETURNING id`,
+			fixture.orgID, slug+"@example.test").Scan(&fixture.userID))
+		require.NoError(t, pool.QueryRow(ctx,
+			`INSERT INTO psychologist_profile (user_id, full_name, crp_number, crp_state)
+			 VALUES ($1, $2, $3, 'CE') RETURNING id`,
+			fixture.userID, "Psychologist "+slug, slug).Scan(&fixture.psyID))
+		require.NoError(t, pool.QueryRow(ctx,
+			`INSERT INTO patient_profile (organization_id, full_name)
+			 VALUES ($1, $2) RETURNING id`,
+			fixture.orgID, "Patient "+slug).Scan(&fixture.patientID))
+		_, err := pool.Exec(ctx,
+			`INSERT INTO patient_relationship (patient_id, psychologist_id, status)
+			 VALUES ($1, $2, 'active')`,
+			fixture.patientID, fixture.psyID)
+		require.NoError(t, err)
+		require.NoError(t, pool.QueryRow(ctx,
+			`INSERT INTO session (patient_id, psychologist_id, occurred_at)
+			 VALUES ($1, $2, now()) RETURNING id`,
+			fixture.patientID, fixture.psyID).Scan(&fixture.sessionID))
+		return fixture
+	}
+
+	tenantA := createTenant("tenant-a")
+	tenantB := createTenant("tenant-b")
+
+	_, err := pool.Exec(ctx, `CREATE ROLE acolhe_rls_test NOLOGIN NOSUPERUSER NOBYPASSRLS`)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `GRANT USAGE ON SCHEMA public TO acolhe_rls_test`)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx,
+		`GRANT SELECT ON patient_profile, patient_relationship, session TO acolhe_rls_test`)
+	require.NoError(t, err)
+
+	tx, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback(ctx) })
+	_, err = tx.Exec(ctx, `SET LOCAL ROLE acolhe_rls_test`)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `
+		SELECT set_config('acolhe.user_id', $1, true),
+		       set_config('acolhe.user_role', 'psychologist', true),
+		       set_config('acolhe.psychologist_id', $2, true),
+		       set_config('acolhe.organization_id', $3, true)`,
+		tenantA.userID.String(), tenantA.psyID.String(), tenantA.orgID.String())
+	require.NoError(t, err)
+
+	var ownPatients, otherPatients, ownSessions, otherSessions int
+	require.NoError(t, tx.QueryRow(ctx,
+		`SELECT count(*) FROM patient_profile WHERE id=$1`, tenantA.patientID).Scan(&ownPatients))
+	require.NoError(t, tx.QueryRow(ctx,
+		`SELECT count(*) FROM patient_profile WHERE id=$1`, tenantB.patientID).Scan(&otherPatients))
+	require.NoError(t, tx.QueryRow(ctx,
+		`SELECT count(*) FROM session WHERE id=$1`, tenantA.sessionID).Scan(&ownSessions))
+	require.NoError(t, tx.QueryRow(ctx,
+		`SELECT count(*) FROM session WHERE id=$1`, tenantB.sessionID).Scan(&otherSessions))
+
+	assert.Equal(t, 1, ownPatients)
+	assert.Zero(t, otherPatients, "RLS não pode expor paciente de outro tenant")
+	assert.Equal(t, 1, ownSessions)
+	assert.Zero(t, otherSessions, "RLS não pode expor sessão de outro tenant")
+}

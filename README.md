@@ -8,7 +8,7 @@ API em Go + PostgreSQL do Acolhe (SaaS clínico para psicólogos, LGPD).
 - **PostgreSQL** — multi-tenant, RLS como 2ª camada
 - **Atlas** — schema declarativo (`internal/db/schema.sql`) → migrations + lint
 - **sqlc** — SQL puro → tipos Go (o "repository"); código gerado versionado
-- **asynq + Redis** — jobs assíncronos (export LGPD, lembretes, PDF) — workers na Fase 6
+- **asynq + Redis** — jobs assíncronos (export LGPD, lembretes, PDF)
 - **Air** — hot reload em `.go` e `.sql`
 
 ## Arquitetura — domain-driven flat
@@ -88,6 +88,8 @@ o service o extrai com `tenant.OrgID(ctx)` — o handler nunca conhece a lógica
 - `documentary_record` é **só do psicólogo autor**.
 - `audit_log` e `consent` são **append-only**.
 - Campos `*_encrypted` recebem criptografia a nível de coluna via KMS (pendente).
+- A exportação LGPD usa bucket S3 privado, link assinado de 24h e SMTP com
+  STARTTLS obrigatório; veja as variáveis `S3_*` e `SMTP_*` em `.env.example`.
 
 ## Status do refactor (spec v1.0)
 Concluído e verificado (build/vet/test + integração com Docker):
@@ -106,8 +108,9 @@ Concluído e verificado (build/vet/test + integração com Docker):
   e Redis real): isolamento multi-tenant, stack completo (tx + audit), round-trip
   de fila.
 
-Pendente (refinamentos): valores tipados de resposta (`activity_response_value`),
-render real de PDF (infra/S3), listagem de templates de documento e de notificações.
+Pendente (refinamentos): render do job genérico `document:pdf` e listagem de
+templates de documento e de notificações. A exportação LGPD já gera um ZIP com
+JSON completo e PDF legível, persiste o SLA e registra conclusão no audit log.
 
 > No deploy, migrations usam o dono do schema e API/worker usam `acolhe_app`,
 > um role `NOSUPERUSER NOBYPASSRLS` configurado idempotentemente antes das

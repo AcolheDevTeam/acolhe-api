@@ -19,22 +19,46 @@ import (
 type FakeQuerier struct {
 	db.Querier
 
-	HealthCheckFn           func(ctx context.Context) (int32, error)
-	GetUserByEmailFn        func(ctx context.Context, email string) (db.GetUserByEmailRow, error)
-	GetUserByIDFn           func(ctx context.Context, id uuid.UUID) (db.GetUserByIDRow, error)
-	GetPsychologistByUserFn func(ctx context.Context, userID uuid.UUID) (db.GetPsychologistByUserRow, error)
-	GetActiveRelationshipFn func(ctx context.Context, arg db.GetActiveRelationshipParams) (db.GetActiveRelationshipRow, error)
-	GetActivityReviewFn     func(ctx context.Context, arg db.GetActivityReviewMetadataParams) (db.GetActivityReviewMetadataRow, error)
-	ListActivityValuesFn    func(ctx context.Context, arg db.ListActivityReviewValuesParams) ([]db.ListActivityReviewValuesRow, error)
-	MarkCompleteReviewedFn  func(ctx context.Context, arg db.MarkCompleteAssignmentReviewedParams) (int64, error)
-	CreateSessionFn         func(ctx context.Context, arg db.CreateSessionParams) (db.CreateSessionRow, error)
-	CreateClinicalRecordFn  func(ctx context.Context, arg db.CreateClinicalRecordParams) error
-	GetSessionsByPatientFn  func(ctx context.Context, arg db.GetSessionsByPatientParams) ([]db.GetSessionsByPatientRow, error)
-	CountAppointmentConflFn func(ctx context.Context, arg db.CountAppointmentConflictsParams) (int64, error)
-	CreateAppointmentFn     func(ctx context.Context, arg db.CreateAppointmentParams) (db.CreateAppointmentRow, error)
-	ListPatientsByOrgFn     func(ctx context.Context, organizationID uuid.UUID) ([]db.ListPatientsByOrgRow, error)
-	ListPatientsByPsychFn   func(ctx context.Context, arg db.ListPatientsByPsychologistParams) ([]db.ListPatientsByPsychologistRow, error)
-	WriteAuditLogFn         func(ctx context.Context, arg db.WriteAuditLogParams) error
+	HealthCheckFn               func(ctx context.Context) (int32, error)
+	GetUserByEmailFn            func(ctx context.Context, email string) (db.GetUserByEmailRow, error)
+	GetUserByIDFn               func(ctx context.Context, id uuid.UUID) (db.GetUserByIDRow, error)
+	GetPsychologistByUserFn     func(ctx context.Context, userID uuid.UUID) (db.GetPsychologistByUserRow, error)
+	GetActiveRelationshipFn     func(ctx context.Context, arg db.GetActiveRelationshipParams) (db.GetActiveRelationshipRow, error)
+	GetPatientExportAccessFn    func(ctx context.Context, arg db.GetPatientExportAccessParams) (db.GetPatientExportAccessRow, error)
+	CreateLGPDExportRequestFn   func(ctx context.Context, arg db.CreateLGPDExportRequestParams) (db.LgpdExportRequest, error)
+	MarkLGPDExportQueueFailedFn func(ctx context.Context, arg db.MarkLGPDExportQueueFailedParams) (int64, error)
+	GetActivityReviewFn         func(ctx context.Context, arg db.GetActivityReviewMetadataParams) (db.GetActivityReviewMetadataRow, error)
+	ListActivityValuesFn        func(ctx context.Context, arg db.ListActivityReviewValuesParams) ([]db.ListActivityReviewValuesRow, error)
+	MarkCompleteReviewedFn      func(ctx context.Context, arg db.MarkCompleteAssignmentReviewedParams) (int64, error)
+	CreateSessionFn             func(ctx context.Context, arg db.CreateSessionParams) (db.CreateSessionRow, error)
+	CreateClinicalRecordFn      func(ctx context.Context, arg db.CreateClinicalRecordParams) error
+	GetSessionsByPatientFn      func(ctx context.Context, arg db.GetSessionsByPatientParams) ([]db.GetSessionsByPatientRow, error)
+	CountAppointmentConflFn     func(ctx context.Context, arg db.CountAppointmentConflictsParams) (int64, error)
+	CreateAppointmentFn         func(ctx context.Context, arg db.CreateAppointmentParams) (db.CreateAppointmentRow, error)
+	ListPatientsByOrgFn         func(ctx context.Context, organizationID uuid.UUID) ([]db.ListPatientsByOrgRow, error)
+	ListPatientsByPsychFn       func(ctx context.Context, arg db.ListPatientsByPsychologistParams) ([]db.ListPatientsByPsychologistRow, error)
+	WriteAuditLogFn             func(ctx context.Context, arg db.WriteAuditLogParams) error
+}
+
+func (f *FakeQuerier) GetPatientExportAccess(ctx context.Context, arg db.GetPatientExportAccessParams) (db.GetPatientExportAccessRow, error) {
+	if f.GetPatientExportAccessFn != nil {
+		return f.GetPatientExportAccessFn(ctx, arg)
+	}
+	panic("GetPatientExportAccess não configurado no FakeQuerier")
+}
+
+func (f *FakeQuerier) CreateLGPDExportRequest(ctx context.Context, arg db.CreateLGPDExportRequestParams) (db.LgpdExportRequest, error) {
+	if f.CreateLGPDExportRequestFn != nil {
+		return f.CreateLGPDExportRequestFn(ctx, arg)
+	}
+	panic("CreateLGPDExportRequest não configurado no FakeQuerier")
+}
+
+func (f *FakeQuerier) MarkLGPDExportQueueFailed(ctx context.Context, arg db.MarkLGPDExportQueueFailedParams) (int64, error) {
+	if f.MarkLGPDExportQueueFailedFn != nil {
+		return f.MarkLGPDExportQueueFailedFn(ctx, arg)
+	}
+	panic("MarkLGPDExportQueueFailed não configurado no FakeQuerier")
 }
 
 func (f *FakeQuerier) GetActivityReviewMetadata(ctx context.Context, arg db.GetActivityReviewMetadataParams) (db.GetActivityReviewMetadataRow, error) {

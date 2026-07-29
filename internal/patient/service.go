@@ -34,10 +34,18 @@ var (
 
 type Service struct {
 	q     db.Querier
-	queue *asynq.Client
+	queue TaskEnqueuer
 }
 
-func NewService(q db.Querier, queue *asynq.Client) *Service {
+type TaskEnqueuer interface {
+	EnqueueContext(
+		ctx context.Context,
+		task *asynq.Task,
+		opts ...asynq.Option,
+	) (*asynq.TaskInfo, error)
+}
+
+func NewService(q db.Querier, queue TaskEnqueuer) *Service {
 	return &Service{q: q, queue: queue}
 }
 
@@ -49,20 +57,40 @@ func (s *Service) RequestExport(ctx context.Context, patientID uuid.UUID) error 
 	if !ok {
 		return tenant.ErrNoTenant
 	}
-	if _, err := s.Get(ctx, patientID); err != nil {
-		return err // ErrNotFound se fora da org
+	q := tenant.Queries(ctx, s.q)
+	if _, err := q.GetPatientExportAccess(ctx, db.GetPatientExportAccessParams{
+		RequestedBy: id.UserID, PatientID: patientID, OrganizationID: id.OrgID,
+	}); err != nil {
+		return ErrNotFound
 	}
 	if s.queue == nil {
 		return ErrQueueUnavailable
 	}
+
+	requestID := uuid.New()
+	requestedAt := time.Now().UTC()
+	if _, err := q.CreateLGPDExportRequest(ctx, db.CreateLGPDExportRequestParams{
+		ID: requestID, PatientID: patientID, OrganizationID: id.OrgID,
+		RequestedBy: id.UserID, RequestedAt: requestedAt,
+		SlaDeadline: requestedAt.Add(24 * time.Hour),
+	}); err != nil {
+		return err
+	}
+
 	task, err := tasks.NewLGPDExportTask(tasks.LGPDExportPayload{
-		PatientID:   patientID,
-		RequestedBy: id.UserID,
+		RequestID: requestID, PatientID: patientID, OrganizationID: id.OrgID,
+		RequestedBy: id.UserID, RequesterRole: id.Role, RequestedAt: requestedAt,
 	})
 	if err != nil {
 		return err
 	}
 	_, err = s.queue.EnqueueContext(ctx, task)
+	if err != nil {
+		message := err.Error()
+		_, _ = q.MarkLGPDExportQueueFailed(ctx, db.MarkLGPDExportQueueFailedParams{
+			LastError: &message, ID: requestID, RequestedBy: id.UserID,
+		})
+	}
 	return err
 }
 

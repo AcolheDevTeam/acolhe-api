@@ -363,6 +363,54 @@ CREATE TABLE audit_log (
   occurred_at     timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE lgpd_export_request (
+  id              uuid PRIMARY KEY,
+  patient_id      uuid NOT NULL REFERENCES patient_profile(id),
+  organization_id uuid NOT NULL REFERENCES organization(id),
+  requested_by    uuid NOT NULL REFERENCES "user"(id),
+  requested_at    timestamptz NOT NULL,
+  sla_deadline    timestamptz NOT NULL,
+  status          text NOT NULL DEFAULT 'queued'
+                    CHECK (status IN ('queued','processing','stored','completed','failed')),
+  attempts        integer NOT NULL DEFAULT 0,
+  object_key      text,
+  artifact_sha256 text CHECK (artifact_sha256 IS NULL OR artifact_sha256 ~ '^[0-9a-f]{64}$'),
+  completed_at    timestamptz,
+  notified_at     timestamptz,
+  last_error      text,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now(),
+  CHECK (sla_deadline = requested_at + interval '24 hours'),
+  CHECK (
+    (status IN ('stored','completed') AND object_key IS NOT NULL AND artifact_sha256 IS NOT NULL)
+    OR status IN ('queued','processing','failed')
+  ),
+  CHECK (
+    (status = 'completed' AND completed_at IS NOT NULL AND notified_at IS NOT NULL)
+    OR status <> 'completed'
+  )
+);
+
+-- Consultável pelo pipeline de observabilidade sem expor conteúdo do artefato.
+-- A view herda RLS da tabela base (security_invoker, PostgreSQL 15+).
+CREATE VIEW lgpd_export_sla_metric
+  WITH (security_invoker = true) AS
+SELECT organization_id,
+       count(*) FILTER (
+         WHERE status <> 'completed' AND now() > sla_deadline
+       )::integer AS breached_pending,
+       count(*) FILTER (
+         WHERE status = 'completed' AND completed_at > sla_deadline
+       )::integer AS breached_completed,
+       count(*) FILTER (
+         WHERE status IN ('queued','processing','stored')
+       )::integer AS pending,
+       max(EXTRACT(epoch FROM (
+         COALESCE(completed_at, now()) - requested_at
+       ))) AS max_duration_seconds
+FROM lgpd_export_request
+GROUP BY organization_id;
+
 -- ============================================================
 -- 5. Constraints não óbvias
 -- ============================================================
@@ -437,6 +485,11 @@ CREATE INDEX idx_notification_user_unread ON notification (user_id, read_at) WHE
 CREATE INDEX idx_audit_actor_time ON audit_log (actor_user_id, occurred_at DESC);
 CREATE INDEX idx_audit_org_time ON audit_log (organization_id, occurred_at DESC);
 CREATE INDEX idx_audit_resource ON audit_log (resource_type, resource_id);
+CREATE INDEX idx_lgpd_export_sla_pending
+  ON lgpd_export_request (sla_deadline)
+  WHERE status IN ('queued','processing','stored');
+CREATE INDEX idx_lgpd_export_patient_time
+  ON lgpd_export_request (patient_id, requested_at DESC);
 
 -- ============================================================
 -- 7. Row-Level Security (2ª camada de defesa)
@@ -847,6 +900,7 @@ ALTER TABLE appointment         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE session             ENABLE ROW LEVEL SECURITY;
 ALTER TABLE clinical_record     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE documentary_record  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lgpd_export_request ENABLE ROW LEVEL SECURITY;
 
 -- Psicólogo vê só seus pacientes; paciente vê só a si; org_admin vê listagem da org.
 CREATE POLICY patient_isolation ON patient_profile
@@ -865,6 +919,15 @@ CREATE POLICY patient_isolation ON patient_profile
 -- Registro Documental: só o autor, sempre.
 CREATE POLICY documentary_record_author_only ON documentary_record
   FOR ALL USING (author_id = current_psychologist_id());
+
+CREATE POLICY lgpd_export_request_actor_only ON lgpd_export_request
+  FOR ALL USING (
+    requested_by = current_user_id()
+    AND organization_id = current_organization_id()
+  ) WITH CHECK (
+    requested_by = current_user_id()
+    AND organization_id = current_organization_id()
+  );
 
 CREATE POLICY patient_profile_psychologist_insert ON patient_profile
   FOR INSERT WITH CHECK (

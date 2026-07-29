@@ -220,6 +220,32 @@ type DocumentaryRecord struct {
 	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
+type LgpdExportRequest struct {
+	ID             uuid.UUID  `json:"id"`
+	PatientID      uuid.UUID  `json:"patient_id"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
+	RequestedBy    uuid.UUID  `json:"requested_by"`
+	RequestedAt    time.Time  `json:"requested_at"`
+	SlaDeadline    time.Time  `json:"sla_deadline"`
+	Status         string     `json:"status"`
+	Attempts       int32      `json:"attempts"`
+	ObjectKey      *string    `json:"object_key"`
+	ArtifactSha256 *string    `json:"artifact_sha256"`
+	CompletedAt    *time.Time `json:"completed_at"`
+	NotifiedAt     *time.Time `json:"notified_at"`
+	LastError      *string    `json:"last_error"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+type LgpdExportSlaMetric struct {
+	OrganizationID     uuid.UUID   `json:"organization_id"`
+	BreachedPending    int32       `json:"breached_pending"`
+	BreachedCompleted  int32       `json:"breached_completed"`
+	Pending            int32       `json:"pending"`
+	MaxDurationSeconds interface{} `json:"max_duration_seconds"`
+}
+
 type Notification struct {
 	ID           uuid.UUID  `json:"id"`
 	UserID       uuid.UUID  `json:"user_id"`

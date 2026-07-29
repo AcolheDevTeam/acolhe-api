@@ -18,5 +18,16 @@ rules:
         - /internal/db/generated/
         - "**/*_test.go"
     patterns:
-      - pattern-regex: '(?i)(select|update|delete)[\s\S]*?\b(patient_profile|appointment|clinical_note|organization_member)\b'
-      - pattern-not-regex: '(?i)organization_id'
+      - pattern-either:
+          - pattern: $DB.Query($CTX, $QUERY, ...)
+          - pattern: $DB.QueryRow($CTX, $QUERY, ...)
+          - pattern: $DB.Exec($CTX, $QUERY, ...)
+          - pattern: $DB.QueryContext($CTX, $QUERY, ...)
+          - pattern: $DB.QueryRowContext($CTX, $QUERY, ...)
+          - pattern: $DB.ExecContext($CTX, $QUERY, ...)
+      - metavariable-pattern:
+          metavariable: $QUERY
+          language: generic
+          patterns:
+            - pattern-regex: '(?is)\b(?:select\b[\s\S]*?\bfrom\s+|update\s+|delete\s+from\s+)(?:"?[a-z_][a-z0-9_]*"?\.)?"?(?:patient_profile|appointment|clinical_note|organization_member)"?\b'
+            - pattern-not-regex: '(?i)organization_id'

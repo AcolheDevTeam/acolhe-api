@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -27,16 +28,27 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+var allowedRoles = map[string]bool{
+	"platform_admin": true,
+	"org_admin":      true,
+	"psychologist":   true,
+	"patient":        true,
+}
+
 // GenerateToken emite um JWT HS256 válido por 7 dias.
 func GenerateToken(secret, userID, role, orgID string) (string, error) {
+	if err := validateIdentityClaims(secret, userID, role, orgID); err != nil {
+		return "", err
+	}
+	now := time.Now()
 	claims := Claims{
 		UserID:         userID,
 		Role:           role,
 		OrganizationID: orgID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(7 * 24 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(7 * 24 * time.Hour)),
 		},
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
@@ -44,15 +56,48 @@ func GenerateToken(secret, userID, role, orgID string) (string, error) {
 
 // ParseToken valida e decodifica o JWT.
 func ParseToken(secret, tokenStr string) (*Claims, error) {
+	if secret == "" || tokenStr == "" {
+		return nil, errors.New("token inválido")
+	}
 	claims := &Claims{}
 	token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("método de assinatura inesperado")
-		}
 		return []byte(secret), nil
-	})
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithExpirationRequired())
 	if err != nil || !token.Valid {
 		return nil, errors.New("token inválido")
 	}
+	if claims.Subject != claims.UserID {
+		return nil, errors.New("token inválido")
+	}
+	if err := validateIdentityClaims(
+		secret,
+		claims.UserID,
+		claims.Role,
+		claims.OrganizationID,
+	); err != nil {
+		return nil, errors.New("token inválido")
+	}
 	return claims, nil
+}
+
+func validateIdentityClaims(secret, userID, role, orgID string) error {
+	if secret == "" {
+		return errors.New("segredo JWT ausente")
+	}
+	if _, err := uuid.Parse(userID); err != nil {
+		return errors.New("usuário JWT inválido")
+	}
+	if !allowedRoles[role] {
+		return errors.New("papel JWT inválido")
+	}
+	if role == "platform_admin" {
+		if orgID != "" {
+			return errors.New("platform admin não pertence a organização")
+		}
+		return nil
+	}
+	if _, err := uuid.Parse(orgID); err != nil {
+		return errors.New("organização JWT inválida")
+	}
+	return nil
 }

@@ -6,25 +6,31 @@ package document
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hibiken/asynq"
 
 	db "github.com/joycesilva/acolhe-api/internal/db/generated"
+	taskqueue "github.com/joycesilva/acolhe-api/internal/queue"
 	"github.com/joycesilva/acolhe-api/internal/tasks"
 	"github.com/joycesilva/acolhe-api/internal/tenant"
 )
 
-// ErrPsychologistRequired: usuário autenticado não tem perfil de psicólogo.
-var ErrPsychologistRequired = errors.New("ação restrita a psicólogos")
+var (
+	// ErrPsychologistRequired: usuário autenticado não tem perfil de psicólogo.
+	ErrPsychologistRequired = errors.New("ação restrita a psicólogos")
+	ErrInvalidInput         = errors.New("dados do documento inválidos")
+	ErrPatientNotFound      = errors.New("paciente não encontrado")
+	ErrQueueUnavailable     = errors.New("fila de tarefas indisponível")
+)
 
 type Service struct {
 	q     db.Querier
-	queue *asynq.Client // produtor de jobs document:pdf (usado a partir da Fase 6)
+	queue taskqueue.Enqueuer
 }
 
-func NewService(q db.Querier, queue *asynq.Client) *Service {
+func NewService(q db.Querier, queue taskqueue.Enqueuer) *Service {
 	return &Service{q: q, queue: queue}
 }
 
@@ -75,13 +81,25 @@ type GenerateRequest struct {
 // document:pdf para o worker renderizar e preencher o pdf_url depois.
 func (s *Service) GeneratePDF(ctx context.Context, req GenerateRequest) (*Document, error) {
 	id, ok := tenant.FromContext(ctx)
-	if !ok {
-		return nil, tenant.ErrNoTenant
+	if !ok || id.Role != "psychologist" {
+		return nil, ErrPsychologistRequired
+	}
+	req.Type = strings.TrimSpace(req.Type)
+	if req.PatientID == uuid.Nil || len(req.Type) == 0 || len(req.Type) > 100 {
+		return nil, ErrInvalidInput
+	}
+	if s.queue == nil {
+		return nil, ErrQueueUnavailable
 	}
 	q := tenant.Queries(ctx, s.q)
 	psy, err := q.GetPsychologistByUser(ctx, id.UserID)
 	if err != nil {
 		return nil, ErrPsychologistRequired
+	}
+	if _, err := q.GetPatientForPsychologist(ctx, db.GetPatientForPsychologistParams{
+		ID: req.PatientID, OrganizationID: id.OrgID, PsychologistID: psy.ID,
+	}); err != nil {
+		return nil, ErrPatientNotFound
 	}
 
 	row, err := q.CreateDocument(ctx, db.CreateDocumentParams{
@@ -95,15 +113,14 @@ func (s *Service) GeneratePDF(ctx context.Context, req GenerateRequest) (*Docume
 		return nil, err
 	}
 
-	if s.queue != nil {
-		task, terr := tasks.NewPDFTask(tasks.PDFPayload{
-			DocumentID:     row.ID,
-			PatientID:      row.PatientID,
-			PsychologistID: row.PsychologistID,
-		})
-		if terr == nil {
-			_, _ = s.queue.EnqueueContext(ctx, task)
-		}
+	task, err := tasks.NewPDFTask(tasks.PDFPayload{
+		DocumentID: row.ID, PatientID: row.PatientID, PsychologistID: row.PsychologistID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.queue.EnqueueContext(ctx, task); err != nil {
+		return nil, err
 	}
 
 	return &Document{

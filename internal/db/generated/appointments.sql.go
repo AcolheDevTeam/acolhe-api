@@ -14,15 +14,18 @@ import (
 
 const countAppointmentConflicts = `-- name: CountAppointmentConflicts :one
 SELECT count(*) AS conflict_count
-FROM appointment
-WHERE psychologist_id = $1
-  AND status <> 'canceled'
-  AND tstzrange(scheduled_for, scheduled_for + duration_minutes * interval '1 minute')
-   && tstzrange($2, $3)
+FROM appointment a
+JOIN patient_profile patient ON patient.id = a.patient_id
+WHERE a.psychologist_id = $1
+  AND patient.organization_id = $2
+  AND a.status <> 'canceled'
+  AND tstzrange(a.scheduled_for, a.scheduled_for + a.duration_minutes * interval '1 minute')
+   && tstzrange($3, $4)
 `
 
 type CountAppointmentConflictsParams struct {
 	PsychologistID uuid.UUID   `json:"psychologist_id"`
+	OrganizationID uuid.UUID   `json:"organization_id"`
 	WindowStart    interface{} `json:"window_start"`
 	WindowEnd      interface{} `json:"window_end"`
 }
@@ -31,7 +34,12 @@ type CountAppointmentConflictsParams struct {
 // tstzrange(...) && tstzrange(...) testa interseção de intervalos.
 // O service calcula window_end = scheduled_for + duration; assim a query só recebe timestamptz.
 func (q *Queries) CountAppointmentConflicts(ctx context.Context, arg CountAppointmentConflictsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countAppointmentConflicts, arg.PsychologistID, arg.WindowStart, arg.WindowEnd)
+	row := q.db.QueryRow(ctx, countAppointmentConflicts,
+		arg.PsychologistID,
+		arg.OrganizationID,
+		arg.WindowStart,
+		arg.WindowEnd,
+	)
 	var conflict_count int64
 	err := row.Scan(&conflict_count)
 	return conflict_count, err
@@ -71,6 +79,49 @@ func (q *Queries) CreateAppointment(ctx context.Context, arg CreateAppointmentPa
 		arg.Modality,
 	)
 	var i CreateAppointmentRow
+	err := row.Scan(
+		&i.ID,
+		&i.PatientID,
+		&i.PsychologistID,
+		&i.ScheduledFor,
+		&i.DurationMinutes,
+		&i.Modality,
+		&i.Status,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getAppointmentForPsychologist = `-- name: GetAppointmentForPsychologist :one
+SELECT a.id, a.patient_id, a.psychologist_id, a.scheduled_for,
+       a.duration_minutes, a.modality, a.status, a.created_at
+FROM appointment a
+JOIN patient_profile patient ON patient.id = a.patient_id
+WHERE a.id = $1
+  AND a.psychologist_id = $2
+  AND patient.organization_id = $3
+`
+
+type GetAppointmentForPsychologistParams struct {
+	ID             uuid.UUID `json:"id"`
+	PsychologistID uuid.UUID `json:"psychologist_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+}
+
+type GetAppointmentForPsychologistRow struct {
+	ID              uuid.UUID `json:"id"`
+	PatientID       uuid.UUID `json:"patient_id"`
+	PsychologistID  uuid.UUID `json:"psychologist_id"`
+	ScheduledFor    time.Time `json:"scheduled_for"`
+	DurationMinutes int32     `json:"duration_minutes"`
+	Modality        string    `json:"modality"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+func (q *Queries) GetAppointmentForPsychologist(ctx context.Context, arg GetAppointmentForPsychologistParams) (GetAppointmentForPsychologistRow, error) {
+	row := q.db.QueryRow(ctx, getAppointmentForPsychologist, arg.ID, arg.PsychologistID, arg.OrganizationID)
+	var i GetAppointmentForPsychologistRow
 	err := row.Scan(
 		&i.ID,
 		&i.PatientID,
@@ -137,4 +188,59 @@ func (q *Queries) ListAppointmentsByPsychologist(ctx context.Context, arg ListAp
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateAppointmentStatus = `-- name: UpdateAppointmentStatus :one
+UPDATE appointment appointment
+SET status = $1, updated_at = now()
+FROM patient_profile patient
+WHERE appointment.id = $2
+  AND patient.id = appointment.patient_id
+  AND appointment.psychologist_id = $3
+  AND patient.organization_id = $4
+  AND appointment.status = $5
+RETURNING appointment.id, appointment.patient_id, appointment.psychologist_id,
+          appointment.scheduled_for, appointment.duration_minutes,
+          appointment.modality, appointment.status, appointment.created_at
+`
+
+type UpdateAppointmentStatusParams struct {
+	Status         string    `json:"status"`
+	ID             uuid.UUID `json:"id"`
+	PsychologistID uuid.UUID `json:"psychologist_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	CurrentStatus  string    `json:"current_status"`
+}
+
+type UpdateAppointmentStatusRow struct {
+	ID              uuid.UUID `json:"id"`
+	PatientID       uuid.UUID `json:"patient_id"`
+	PsychologistID  uuid.UUID `json:"psychologist_id"`
+	ScheduledFor    time.Time `json:"scheduled_for"`
+	DurationMinutes int32     `json:"duration_minutes"`
+	Modality        string    `json:"modality"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+func (q *Queries) UpdateAppointmentStatus(ctx context.Context, arg UpdateAppointmentStatusParams) (UpdateAppointmentStatusRow, error) {
+	row := q.db.QueryRow(ctx, updateAppointmentStatus,
+		arg.Status,
+		arg.ID,
+		arg.PsychologistID,
+		arg.OrganizationID,
+		arg.CurrentStatus,
+	)
+	var i UpdateAppointmentStatusRow
+	err := row.Scan(
+		&i.ID,
+		&i.PatientID,
+		&i.PsychologistID,
+		&i.ScheduledFor,
+		&i.DurationMinutes,
+		&i.Modality,
+		&i.Status,
+		&i.CreatedAt,
+	)
+	return i, err
 }

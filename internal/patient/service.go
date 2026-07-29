@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	db "github.com/joycesilva/acolhe-api/internal/db/generated"
+	taskqueue "github.com/joycesilva/acolhe-api/internal/queue"
 	"github.com/joycesilva/acolhe-api/internal/tasks"
 	"github.com/joycesilva/acolhe-api/internal/tenant"
 )
@@ -34,18 +34,10 @@ var (
 
 type Service struct {
 	q     db.Querier
-	queue TaskEnqueuer
+	queue taskqueue.Enqueuer
 }
 
-type TaskEnqueuer interface {
-	EnqueueContext(
-		ctx context.Context,
-		task *asynq.Task,
-		opts ...asynq.Option,
-	) (*asynq.TaskInfo, error)
-}
-
-func NewService(q db.Querier, queue TaskEnqueuer) *Service {
+func NewService(q db.Querier, queue taskqueue.Enqueuer) *Service {
 	return &Service{q: q, queue: queue}
 }
 

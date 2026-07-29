@@ -148,3 +148,101 @@ func TestRequestExportHidesUnauthorizedPatient(t *testing.T) {
 	assert.ErrorIs(t, err, patient.ErrNotFound)
 	assert.Nil(t, queue.task)
 }
+
+func TestCreatePatientRejectsInvalidIdentityAndInput(t *testing.T) {
+	validBirthDate := "1990-01-02"
+	valid := patient.CreateRequest{
+		FullName: "Paciente Teste", Email: "patient@example.test",
+		BirthDate: &validBirthDate,
+	}
+	patientContext := tenant.WithIdentity(context.Background(), tenant.Identity{
+		UserID: uuid.New(), OrgID: uuid.New(), Role: "patient",
+	})
+	_, err := patient.NewService(&testsupport.FakeQuerier{}, nil).Create(patientContext, valid)
+	assert.ErrorIs(t, err, patient.ErrPsychologistRequired)
+
+	psychologistContext := tenant.WithIdentity(context.Background(), tenant.Identity{
+		UserID: uuid.New(), OrgID: uuid.New(), Role: "psychologist",
+	})
+	tests := []struct {
+		name string
+		edit func(*patient.CreateRequest)
+	}{
+		{name: "short name", edit: func(request *patient.CreateRequest) { request.FullName = "x" }},
+		{name: "invalid email", edit: func(request *patient.CreateRequest) { request.Email = "not-an-email" }},
+		{name: "display name email", edit: func(request *patient.CreateRequest) { request.Email = "Name <patient@example.test>" }},
+		{name: "future birth date", edit: func(request *patient.CreateRequest) {
+			value := time.Now().AddDate(1, 0, 0).Format(time.DateOnly)
+			request.BirthDate = &value
+		}},
+		{name: "implausible birth date", edit: func(request *patient.CreateRequest) {
+			value := "1899-12-31"
+			request.BirthDate = &value
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := valid
+			test.edit(&request)
+			_, err := patient.NewService(&testsupport.FakeQuerier{}, nil).Create(
+				psychologistContext,
+				request,
+			)
+			assert.ErrorIs(t, err, patient.ErrInvalidInput)
+		})
+	}
+}
+
+func TestPatientReadPredicatesCarryOrganizationAndPsychologist(t *testing.T) {
+	identity := tenant.Identity{
+		UserID: uuid.New(), OrgID: uuid.New(), Role: "psychologist",
+	}
+	psychologistID, patientID := uuid.New(), uuid.New()
+	now := time.Now().UTC()
+	fake := &testsupport.FakeQuerier{
+		GetPsychologistByUserFn: func(_ context.Context, userID uuid.UUID) (db.GetPsychologistByUserRow, error) {
+			assert.Equal(t, identity.UserID, userID)
+			return db.GetPsychologistByUserRow{ID: psychologistID}, nil
+		},
+		ListPatientsByPsychFn: func(
+			_ context.Context,
+			arg db.ListPatientsByPsychologistParams,
+		) ([]db.ListPatientsByPsychologistRow, error) {
+			assert.Equal(t, identity.OrgID, arg.OrganizationID)
+			assert.Equal(t, psychologistID, arg.PsychologistID)
+			return []db.ListPatientsByPsychologistRow{{
+				ID: patientID, FullName: "Paciente", Status: "active",
+				RelationshipStatus: "active", CreatedAt: now,
+			}}, nil
+		},
+		GetPatientForPsychFn: func(
+			_ context.Context,
+			arg db.GetPatientForPsychologistParams,
+		) (db.GetPatientForPsychologistRow, error) {
+			assert.Equal(t, patientID, arg.ID)
+			assert.Equal(t, identity.OrgID, arg.OrganizationID)
+			assert.Equal(t, psychologistID, arg.PsychologistID)
+			return db.GetPatientForPsychologistRow{
+				ID: patientID, FullName: "Paciente", Status: "active",
+				RelationshipStatus: "active", CreatedAt: now,
+			}, nil
+		},
+	}
+	service := patient.NewService(fake, nil)
+	ctx := tenant.WithIdentity(context.Background(), identity)
+	patients, err := service.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, patients, 1)
+	got, err := service.Get(ctx, patientID)
+	require.NoError(t, err)
+	assert.Equal(t, patientID, got.ID)
+
+	fake.GetPatientForPsychFn = func(
+		context.Context,
+		db.GetPatientForPsychologistParams,
+	) (db.GetPatientForPsychologistRow, error) {
+		return db.GetPatientForPsychologistRow{}, pgx.ErrNoRows
+	}
+	_, err = service.Get(ctx, patientID)
+	assert.ErrorIs(t, err, patient.ErrNotFound)
+}

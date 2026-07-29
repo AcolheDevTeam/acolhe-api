@@ -42,7 +42,10 @@ func New(pool *pgxpool.Pool, q db.Querier, queue *asynq.Client, jwtSecret string
 	e.Use(emw.CORSWithConfig(emw.CORSConfig{
 		AllowOrigins: []string{"*"},
 		AllowHeaders: []string{echo.HeaderAuthorization, echo.HeaderContentType},
-		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodOptions},
+		AllowMethods: []string{
+			http.MethodGet, http.MethodPost, http.MethodPut,
+			http.MethodPatch, http.MethodDelete, http.MethodOptions,
+		},
 	}))
 
 	// Pipeline (spec §4.2): Auth (valida JWT) → Tenant (orgId no context) →

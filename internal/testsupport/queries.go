@@ -25,6 +25,7 @@ type FakeQuerier struct {
 	GetPsychologistByUserFn     func(ctx context.Context, userID uuid.UUID) (db.GetPsychologistByUserRow, error)
 	GetActiveRelationshipFn     func(ctx context.Context, arg db.GetActiveRelationshipParams) (db.GetActiveRelationshipRow, error)
 	GetPatientExportAccessFn    func(ctx context.Context, arg db.GetPatientExportAccessParams) (db.GetPatientExportAccessRow, error)
+	GetPatientForPsychFn        func(ctx context.Context, arg db.GetPatientForPsychologistParams) (db.GetPatientForPsychologistRow, error)
 	CreateLGPDExportRequestFn   func(ctx context.Context, arg db.CreateLGPDExportRequestParams) (db.LgpdExportRequest, error)
 	MarkLGPDExportQueueFailedFn func(ctx context.Context, arg db.MarkLGPDExportQueueFailedParams) (int64, error)
 	GetActivityReviewFn         func(ctx context.Context, arg db.GetActivityReviewMetadataParams) (db.GetActivityReviewMetadataRow, error)
@@ -35,9 +36,58 @@ type FakeQuerier struct {
 	GetSessionsByPatientFn      func(ctx context.Context, arg db.GetSessionsByPatientParams) ([]db.GetSessionsByPatientRow, error)
 	CountAppointmentConflFn     func(ctx context.Context, arg db.CountAppointmentConflictsParams) (int64, error)
 	CreateAppointmentFn         func(ctx context.Context, arg db.CreateAppointmentParams) (db.CreateAppointmentRow, error)
+	GetAppointmentForPsychFn    func(ctx context.Context, arg db.GetAppointmentForPsychologistParams) (db.GetAppointmentForPsychologistRow, error)
+	UpdateAppointmentStatusFn   func(ctx context.Context, arg db.UpdateAppointmentStatusParams) (db.UpdateAppointmentStatusRow, error)
+	PatientInOrgFn              func(ctx context.Context, arg db.PatientInOrgParams) (bool, error)
+	CreateCheckinFn             func(ctx context.Context, arg db.CreateCheckinParams) (db.Checkin, error)
+	ListCheckinsFn              func(ctx context.Context, arg db.ListCheckinsByPatientParams) ([]db.Checkin, error)
+	CreateDocumentFn            func(ctx context.Context, arg db.CreateDocumentParams) (db.CreateDocumentRow, error)
+	ListDocumentsFn             func(ctx context.Context, arg db.ListDocumentsByPatientParams) ([]db.ListDocumentsByPatientRow, error)
 	ListPatientsByOrgFn         func(ctx context.Context, organizationID uuid.UUID) ([]db.ListPatientsByOrgRow, error)
 	ListPatientsByPsychFn       func(ctx context.Context, arg db.ListPatientsByPsychologistParams) ([]db.ListPatientsByPsychologistRow, error)
 	WriteAuditLogFn             func(ctx context.Context, arg db.WriteAuditLogParams) error
+}
+
+func (f *FakeQuerier) GetPatientForPsychologist(ctx context.Context, arg db.GetPatientForPsychologistParams) (db.GetPatientForPsychologistRow, error) {
+	if f.GetPatientForPsychFn != nil {
+		return f.GetPatientForPsychFn(ctx, arg)
+	}
+	panic("GetPatientForPsychologist não configurado no FakeQuerier")
+}
+
+func (f *FakeQuerier) PatientInOrg(ctx context.Context, arg db.PatientInOrgParams) (bool, error) {
+	if f.PatientInOrgFn != nil {
+		return f.PatientInOrgFn(ctx, arg)
+	}
+	panic("PatientInOrg não configurado no FakeQuerier")
+}
+
+func (f *FakeQuerier) CreateCheckin(ctx context.Context, arg db.CreateCheckinParams) (db.Checkin, error) {
+	if f.CreateCheckinFn != nil {
+		return f.CreateCheckinFn(ctx, arg)
+	}
+	panic("CreateCheckin não configurado no FakeQuerier")
+}
+
+func (f *FakeQuerier) ListCheckinsByPatient(ctx context.Context, arg db.ListCheckinsByPatientParams) ([]db.Checkin, error) {
+	if f.ListCheckinsFn != nil {
+		return f.ListCheckinsFn(ctx, arg)
+	}
+	panic("ListCheckinsByPatient não configurado no FakeQuerier")
+}
+
+func (f *FakeQuerier) CreateDocument(ctx context.Context, arg db.CreateDocumentParams) (db.CreateDocumentRow, error) {
+	if f.CreateDocumentFn != nil {
+		return f.CreateDocumentFn(ctx, arg)
+	}
+	panic("CreateDocument não configurado no FakeQuerier")
+}
+
+func (f *FakeQuerier) ListDocumentsByPatient(ctx context.Context, arg db.ListDocumentsByPatientParams) ([]db.ListDocumentsByPatientRow, error) {
+	if f.ListDocumentsFn != nil {
+		return f.ListDocumentsFn(ctx, arg)
+	}
+	panic("ListDocumentsByPatient não configurado no FakeQuerier")
 }
 
 func (f *FakeQuerier) GetPatientExportAccess(ctx context.Context, arg db.GetPatientExportAccessParams) (db.GetPatientExportAccessRow, error) {
@@ -158,6 +208,20 @@ func (f *FakeQuerier) CreateAppointment(ctx context.Context, arg db.CreateAppoin
 		return f.CreateAppointmentFn(ctx, arg)
 	}
 	panic("CreateAppointment não configurado no FakeQuerier")
+}
+
+func (f *FakeQuerier) GetAppointmentForPsychologist(ctx context.Context, arg db.GetAppointmentForPsychologistParams) (db.GetAppointmentForPsychologistRow, error) {
+	if f.GetAppointmentForPsychFn != nil {
+		return f.GetAppointmentForPsychFn(ctx, arg)
+	}
+	panic("GetAppointmentForPsychologist não configurado no FakeQuerier")
+}
+
+func (f *FakeQuerier) UpdateAppointmentStatus(ctx context.Context, arg db.UpdateAppointmentStatusParams) (db.UpdateAppointmentStatusRow, error) {
+	if f.UpdateAppointmentStatusFn != nil {
+		return f.UpdateAppointmentStatusFn(ctx, arg)
+	}
+	panic("UpdateAppointmentStatus não configurado no FakeQuerier")
 }
 
 func (f *FakeQuerier) ListPatientsByOrg(ctx context.Context, organizationID uuid.UUID) ([]db.ListPatientsByOrgRow, error) {

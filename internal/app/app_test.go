@@ -34,31 +34,29 @@ func authed(t *testing.T, method, target, body string, userID, orgID uuid.UUID) 
 	return req
 }
 
-func serve(srv *httptest.Server, req *http.Request) *http.Response {
-	req.RequestURI = ""
-	req.URL.Scheme = "http"
-	req.URL.Host = strings.TrimPrefix(srv.URL, "http://")
-	resp, err := srv.Client().Do(req)
-	if err != nil {
-		panic(err)
-	}
-	return resp
+func jsonRequest(method, target, body string) *http.Request {
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	return req
 }
 
-// newServer sobe um httptest.Server servindo a aplicação montada sobre o fake.
-func newServer(t *testing.T, q db.Querier) *httptest.Server {
+func serve(handler http.Handler, req *http.Request) *http.Response {
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	return recorder.Result()
+}
+
+// newServer monta a aplicação sobre o fake sem abrir portas de rede.
+func newServer(t *testing.T, q db.Querier) http.Handler {
 	t.Helper()
-	srv := httptest.NewServer(app.New(nil, q, nil, testSecret).Handler())
-	t.Cleanup(srv.Close)
-	return srv
+	return app.New(nil, q, nil, testSecret).Handler()
 }
 
 // --- testes ---
 
 func TestHealth_OK(t *testing.T) {
 	srv := newServer(t, &testsupport.FakeQuerier{})
-	resp, err := http.Get(srv.URL + "/health")
-	require.NoError(t, err)
+	resp := serve(srv, httptest.NewRequest(http.MethodGet, "/health", nil))
 	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
@@ -68,8 +66,7 @@ func TestHealth_DBDown(t *testing.T) {
 		HealthCheckFn: func(context.Context) (int32, error) { return 0, errors.New("down") },
 	}
 	srv := newServer(t, q)
-	resp, err := http.Get(srv.URL + "/health")
-	require.NoError(t, err)
+	resp := serve(srv, httptest.NewRequest(http.MethodGet, "/health", nil))
 	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 }
@@ -88,9 +85,9 @@ func TestLogin_OK(t *testing.T) {
 		},
 	}
 	srv := newServer(t, q)
-	resp, err := http.Post(srv.URL+"/login", "application/json",
-		strings.NewReader(`{"email":"psi@acolhe.dev","password":"segredo123"}`))
-	require.NoError(t, err)
+	resp := serve(srv, jsonRequest(
+		http.MethodPost, "/login", `{"email":"psi@acolhe.dev","password":"segredo123"}`,
+	))
 	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -113,17 +110,16 @@ func TestLogin_BadCredentials(t *testing.T) {
 		},
 	}
 	srv := newServer(t, q)
-	resp, err := http.Post(srv.URL+"/login", "application/json",
-		strings.NewReader(`{"email":"psi@acolhe.dev","password":"errada"}`))
-	require.NoError(t, err)
+	resp := serve(srv, jsonRequest(
+		http.MethodPost, "/login", `{"email":"psi@acolhe.dev","password":"errada"}`,
+	))
 	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
 func TestMe_Unauthorized(t *testing.T) {
 	srv := newServer(t, &testsupport.FakeQuerier{})
-	resp, err := http.Get(srv.URL + "/me")
-	require.NoError(t, err)
+	resp := serve(srv, httptest.NewRequest(http.MethodGet, "/me", nil))
 	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
@@ -198,9 +194,16 @@ func TestCreateSession_OK_201(t *testing.T) {
 }
 
 func TestCreateAppointment_Conflict_409(t *testing.T) {
+	psychologistID := uuid.New()
 	q := &testsupport.FakeQuerier{
 		GetPsychologistByUserFn: func(context.Context, uuid.UUID) (db.GetPsychologistByUserRow, error) {
-			return db.GetPsychologistByUserRow{ID: uuid.New()}, nil
+			return db.GetPsychologistByUserRow{ID: psychologistID}, nil
+		},
+		GetPatientForPsychFn: func(
+			context.Context,
+			db.GetPatientForPsychologistParams,
+		) (db.GetPatientForPsychologistRow, error) {
+			return db.GetPatientForPsychologistRow{ID: uuid.New()}, nil
 		},
 		CountAppointmentConflFn: func(context.Context, db.CountAppointmentConflictsParams) (int64, error) {
 			return 1, nil // já há sobreposição
@@ -214,9 +217,16 @@ func TestCreateAppointment_Conflict_409(t *testing.T) {
 }
 
 func TestCreateAppointment_OK_201(t *testing.T) {
+	psychologistID := uuid.New()
 	q := &testsupport.FakeQuerier{
 		GetPsychologistByUserFn: func(context.Context, uuid.UUID) (db.GetPsychologistByUserRow, error) {
-			return db.GetPsychologistByUserRow{ID: uuid.New()}, nil
+			return db.GetPsychologistByUserRow{ID: psychologistID}, nil
+		},
+		GetPatientForPsychFn: func(
+			context.Context,
+			db.GetPatientForPsychologistParams,
+		) (db.GetPatientForPsychologistRow, error) {
+			return db.GetPatientForPsychologistRow{ID: uuid.New()}, nil
 		},
 		CountAppointmentConflFn: func(context.Context, db.CountAppointmentConflictsParams) (int64, error) {
 			return 0, nil

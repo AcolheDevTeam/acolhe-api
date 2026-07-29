@@ -151,7 +151,8 @@ CREATE TABLE appointment (
   scheduled_for    timestamptz NOT NULL,
   duration_minutes integer NOT NULL DEFAULT 50,
   modality         text NOT NULL DEFAULT 'in_person' CHECK (modality IN ('in_person','online')),
-  status           text NOT NULL DEFAULT 'scheduled',
+  status           text NOT NULL DEFAULT 'scheduled'
+                     CHECK (status IN ('scheduled','confirmed','completed','canceled','no_show')),
   created_at       timestamptz NOT NULL DEFAULT now(),
   updated_at       timestamptz NOT NULL DEFAULT now()
 );
@@ -945,6 +946,23 @@ CREATE POLICY appointment_clinical_select ON appointment
 
 CREATE POLICY appointment_psychologist_insert ON appointment
   FOR INSERT WITH CHECK (
+    current_user_role() = 'psychologist'
+    AND psychologist_id = current_psychologist_id()
+    AND patient_id IN (
+      SELECT patient_id FROM patient_relationship
+      WHERE psychologist_id = current_psychologist_id() AND status = 'active'
+    )
+  );
+
+CREATE POLICY appointment_psychologist_update ON appointment
+  FOR UPDATE USING (
+    current_user_role() = 'psychologist'
+    AND psychologist_id = current_psychologist_id()
+    AND patient_id IN (
+      SELECT patient_id FROM patient_relationship
+      WHERE psychologist_id = current_psychologist_id() AND status = 'active'
+    )
+  ) WITH CHECK (
     current_user_role() = 'psychologist'
     AND psychologist_id = current_psychologist_id()
     AND patient_id IN (

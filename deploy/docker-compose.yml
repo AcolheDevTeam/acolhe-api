@@ -30,7 +30,9 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    command: ["redis-server", "--save", "", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory", "64mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redisdata:/data
     # sem `ports:` — Redis fica só na rede interna
 
   # Aplica migrations pendentes (Atlas) antes da API/worker subirem. Roda e sai.
@@ -96,5 +98,6 @@ services:
 
 volumes:
   pgdata:
+  redisdata:
   caddy_data:
   caddy_config:

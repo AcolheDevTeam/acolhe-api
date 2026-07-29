@@ -22,7 +22,7 @@ func (h *Handler) Register(e *echo.Echo) {
 	g.GET("", h.list)
 	g.POST("", h.assign)
 	g.GET("/:id", h.get)
-	g.PATCH("/:id", h.review)
+	g.PUT("/:id/review", h.review)
 	g.GET("/assignments", h.listAssignments) // ?patientId=...
 	g.POST("/assignments/:id/responses", h.submitResponse)
 	g.GET("/assignments/:id/responses", h.listResponses)
@@ -94,12 +94,6 @@ func (h *Handler) review(c echo.Context) error {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "id inválido")
-	}
-	var req struct {
-		Status string `json:"status"`
-	}
-	if err := c.Bind(&req); err != nil || req.Status != "reviewed" {
-		return echo.NewHTTPError(http.StatusBadRequest, "status inválido")
 	}
 	a, err := h.svc.MarkReviewed(c.Request().Context(), id)
 	if err != nil {

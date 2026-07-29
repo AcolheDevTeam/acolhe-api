@@ -169,6 +169,25 @@ func TestClinicalBFFContracts_FullStack(t *testing.T) {
 	require.NoError(t, pool.QueryRow(ctx,
 		`INSERT INTO activity_template (type_id, organization_id, author_id, title)
 		 VALUES ($1,$2,$3,'Registro diário') RETURNING id`, typeID, orgID, psyID).Scan(&templateID))
+	fieldFixtures := []struct {
+		code, label, fieldType, config string
+		order                          int
+	}{
+		{"situation", "Descreva a situação", "long_text", `{"maxLength":2000}`, 1},
+		{"intensity", "Intensidade da emoção", "scale", `{"min":1,"max":10}`, 2},
+		{"recognized", "Reconheceu a distorção?", "boolean", `{}`, 3},
+		{"observed_at", "Quando percebeu?", "datetime", `{}`, 4},
+		{"distortions", "Distorções reconhecidas", "multiple_choice", `{"options":["Catastrofização","Leitura mental"]}`, 5},
+	}
+	fieldIDs := make([]uuid.UUID, len(fieldFixtures))
+	for index, fixture := range fieldFixtures {
+		require.NoError(t, pool.QueryRow(ctx,
+			`INSERT INTO activity_field (
+			   template_id, code, label, field_type, config, display_order
+			 ) VALUES ($1,$2,$3,$4,$5::jsonb,$6) RETURNING id`,
+			templateID, fixture.code, fixture.label, fixture.fieldType,
+			fixture.config, fixture.order).Scan(&fieldIDs[index]))
+	}
 
 	srv := httptest.NewServer(app.New(pool, db.New(pool), nil, "secret").Handler())
 	t.Cleanup(srv.Close)
@@ -317,17 +336,135 @@ func TestClinicalBFFContracts_FullStack(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	assert.Len(t, activities, 1)
 
+	var responseID uuid.UUID
+	require.NoError(t, pool.QueryRow(ctx,
+		`INSERT INTO activity_response (assignment_id, submitted_at, is_draft)
+		 VALUES ($1, '2026-07-28T21:12:00Z', false) RETURNING id`,
+		assignment.ID).Scan(&responseID))
+	valueStatements := []struct {
+		query string
+		value any
+	}{
+		{`INSERT INTO activity_response_value
+		   (response_id, field_id, field_code, value_text)
+		   VALUES ($1,$2,$3,$4)`, "Reunião com gestor sobre os números do trimestre."},
+		{`INSERT INTO activity_response_value
+		   (response_id, field_id, field_code, value_number)
+		   VALUES ($1,$2,$3,$4)`, 7},
+		{`INSERT INTO activity_response_value
+		   (response_id, field_id, field_code, value_boolean)
+		   VALUES ($1,$2,$3,$4)`, true},
+		{`INSERT INTO activity_response_value
+		   (response_id, field_id, field_code, value_datetime)
+		   VALUES ($1,$2,$3,$4)`, time.Date(2026, 7, 28, 18, 30, 0, 0, time.UTC)},
+		{`INSERT INTO activity_response_value
+		   (response_id, field_id, field_code, value_json)
+		   VALUES ($1,$2,$3,$4::jsonb)`, `["Catastrofização","Leitura mental"]`},
+	}
+	for index, value := range valueStatements {
+		_, err = pool.Exec(ctx, value.query,
+			responseID, fieldIDs[index], fieldFixtures[index].code, value.value)
+		require.NoError(t, err)
+	}
 	_, err = pool.Exec(ctx, `UPDATE activity_assignment SET status='submitted' WHERE id=$1`, assignment.ID)
 	require.NoError(t, err)
-	resp = doJSON(t, srv.Client(), http.MethodPatch, srv.URL+"/activities/"+assignment.ID.String(), token,
-		map[string]any{"status": "reviewed"})
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	var reviewed struct {
-		Status string `json:"status"`
+
+	type reviewDetail struct {
+		State           string     `json:"state"`
+		Status          string     `json:"status"`
+		TemplateVersion int32      `json:"templateVersion"`
+		FieldCount      int32      `json:"fieldCount"`
+		ReviewedAt      *time.Time `json:"reviewedAt"`
+		Submission      *struct {
+			ID          uuid.UUID `json:"id"`
+			SubmittedAt time.Time `json:"submittedAt"`
+			Fields      []struct {
+				Code         string          `json:"code"`
+				Kind         string          `json:"kind"`
+				DisplayOrder int32           `json:"displayOrder"`
+				Value        json.RawMessage `json:"value"`
+			} `json:"fields"`
+		} `json:"submission"`
 	}
+	resp = doJSON(t, srv.Client(), http.MethodGet,
+		srv.URL+"/activities/"+assignment.ID.String(), token, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var submitted reviewDetail
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&submitted))
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, "submitted", submitted.State)
+	assert.Equal(t, int32(1), submitted.TemplateVersion)
+	assert.Equal(t, int32(len(fieldFixtures)), submitted.FieldCount)
+	require.NotNil(t, submitted.Submission)
+	assert.Equal(t, responseID, submitted.Submission.ID)
+	require.Len(t, submitted.Submission.Fields, len(fieldFixtures))
+	assert.Equal(t, []string{"text", "number", "boolean", "datetime", "json"}, []string{
+		submitted.Submission.Fields[0].Kind,
+		submitted.Submission.Fields[1].Kind,
+		submitted.Submission.Fields[2].Kind,
+		submitted.Submission.Fields[3].Kind,
+		submitted.Submission.Fields[4].Kind,
+	})
+	for index, field := range submitted.Submission.Fields {
+		assert.Equal(t, int32(index+1), field.DisplayOrder)
+	}
+
+	resp = doJSON(t, srv.Client(), http.MethodPut,
+		srv.URL+"/activities/"+assignment.ID.String()+"/review", token, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var reviewed reviewDetail
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&reviewed))
 	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, "reviewed", reviewed.State)
 	assert.Equal(t, "reviewed", reviewed.Status)
+	require.NotNil(t, reviewed.ReviewedAt)
+	firstReviewedAt := *reviewed.ReviewedAt
+
+	resp = doJSON(t, srv.Client(), http.MethodPut,
+		srv.URL+"/activities/"+assignment.ID.String()+"/review", token, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&reviewed))
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, firstReviewedAt, *reviewed.ReviewedAt, "replay deve preservar o primeiro reviewedAt")
+
+	// Missing and legacy-incomplete submissions fail closed.
+	resp = doJSON(t, srv.Client(), http.MethodPost, srv.URL+"/activities", token, map[string]any{
+		"templateId": templateID, "patientId": patient.ID,
+	})
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var incompleteAssignment struct {
+		ID uuid.UUID `json:"id"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&incompleteAssignment))
+	require.NoError(t, resp.Body.Close())
+	resp = doJSON(t, srv.Client(), http.MethodGet,
+		srv.URL+"/activities/"+incompleteAssignment.ID.String(), token, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var awaiting reviewDetail
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&awaiting))
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, "awaiting_response", awaiting.State)
+	assert.Nil(t, awaiting.Submission)
+	resp = doJSON(t, srv.Client(), http.MethodPut,
+		srv.URL+"/activities/"+incompleteAssignment.ID.String()+"/review", token, nil)
+	require.Equal(t, http.StatusConflict, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	_, err = pool.Exec(ctx,
+		`INSERT INTO activity_response (assignment_id, submitted_at, is_draft)
+		 VALUES ($1, now(), false)`, incompleteAssignment.ID)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx,
+		`UPDATE activity_assignment SET status='submitted' WHERE id=$1`, incompleteAssignment.ID)
+	require.NoError(t, err)
+	resp = doJSON(t, srv.Client(), http.MethodGet,
+		srv.URL+"/activities/"+incompleteAssignment.ID.String(), token, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var invalid reviewDetail
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&invalid))
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, "submission_invalid", invalid.State)
+	assert.Nil(t, invalid.Submission)
 
 	var otherUserID uuid.UUID
 	require.NoError(t, pool.QueryRow(ctx,

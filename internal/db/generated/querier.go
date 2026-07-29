@@ -31,6 +31,7 @@ type Querier interface {
 	// patient_relationship não tem organization_id; o isolamento de org é feito
 	// pelo join em patient_profile (que carrega organization_id).
 	GetActiveRelationship(ctx context.Context, arg GetActiveRelationshipParams) (GetActiveRelationshipRow, error)
+	GetActivityReviewMetadata(ctx context.Context, arg GetActivityReviewMetadataParams) (GetActivityReviewMetadataRow, error)
 	GetActivityTemplateInOrg(ctx context.Context, arg GetActivityTemplateInOrgParams) (GetActivityTemplateInOrgRow, error)
 	GetAssignmentDetailInOrg(ctx context.Context, arg GetAssignmentDetailInOrgParams) (GetAssignmentDetailInOrgRow, error)
 	// Confirma que o assignment existe e pertence à organização (via paciente).
@@ -51,6 +52,7 @@ type Querier interface {
 	GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow, error)
 	HealthCheck(ctx context.Context) (int32, error)
+	ListActivityReviewValues(ctx context.Context, arg ListActivityReviewValuesParams) ([]ListActivityReviewValuesRow, error)
 	// Templates da organização (organization_id pode ser nulo p/ templates globais).
 	ListActivityTemplates(ctx context.Context, organizationID *uuid.UUID) ([]ListActivityTemplatesRow, error)
 	ListAppointmentsByPsychologist(ctx context.Context, arg ListAppointmentsByPsychologistParams) ([]ListAppointmentsByPsychologistRow, error)
@@ -63,8 +65,8 @@ type Querier interface {
 	ListPublishedConsentDocuments(ctx context.Context) ([]ListPublishedConsentDocumentsRow, error)
 	ListResponsesByAssignment(ctx context.Context, assignmentID uuid.UUID) ([]ListResponsesByAssignmentRow, error)
 	LockPatientCreationKey(ctx context.Context, idempotencyKey string) (interface{}, error)
-	MarkAssignmentReviewed(ctx context.Context, arg MarkAssignmentReviewedParams) (int64, error)
 	MarkAssignmentSubmitted(ctx context.Context, id uuid.UUID) error
+	MarkCompleteAssignmentReviewed(ctx context.Context, arg MarkCompleteAssignmentReviewedParams) (int64, error)
 	// Confirma que o paciente pertence à organização (usado antes de criar check-in).
 	PatientInOrg(ctx context.Context, arg PatientInOrgParams) (bool, error)
 	ReissuePatientInvitation(ctx context.Context, arg ReissuePatientInvitationParams) (ReissuePatientInvitationRow, error)

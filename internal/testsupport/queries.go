@@ -24,6 +24,9 @@ type FakeQuerier struct {
 	GetUserByIDFn           func(ctx context.Context, id uuid.UUID) (db.GetUserByIDRow, error)
 	GetPsychologistByUserFn func(ctx context.Context, userID uuid.UUID) (db.GetPsychologistByUserRow, error)
 	GetActiveRelationshipFn func(ctx context.Context, arg db.GetActiveRelationshipParams) (db.GetActiveRelationshipRow, error)
+	GetActivityReviewFn     func(ctx context.Context, arg db.GetActivityReviewMetadataParams) (db.GetActivityReviewMetadataRow, error)
+	ListActivityValuesFn    func(ctx context.Context, arg db.ListActivityReviewValuesParams) ([]db.ListActivityReviewValuesRow, error)
+	MarkCompleteReviewedFn  func(ctx context.Context, arg db.MarkCompleteAssignmentReviewedParams) (int64, error)
 	CreateSessionFn         func(ctx context.Context, arg db.CreateSessionParams) (db.CreateSessionRow, error)
 	CreateClinicalRecordFn  func(ctx context.Context, arg db.CreateClinicalRecordParams) error
 	GetSessionsByPatientFn  func(ctx context.Context, arg db.GetSessionsByPatientParams) ([]db.GetSessionsByPatientRow, error)
@@ -32,6 +35,27 @@ type FakeQuerier struct {
 	ListPatientsByOrgFn     func(ctx context.Context, organizationID uuid.UUID) ([]db.ListPatientsByOrgRow, error)
 	ListPatientsByPsychFn   func(ctx context.Context, arg db.ListPatientsByPsychologistParams) ([]db.ListPatientsByPsychologistRow, error)
 	WriteAuditLogFn         func(ctx context.Context, arg db.WriteAuditLogParams) error
+}
+
+func (f *FakeQuerier) GetActivityReviewMetadata(ctx context.Context, arg db.GetActivityReviewMetadataParams) (db.GetActivityReviewMetadataRow, error) {
+	if f.GetActivityReviewFn != nil {
+		return f.GetActivityReviewFn(ctx, arg)
+	}
+	panic("GetActivityReviewMetadata não configurado no FakeQuerier")
+}
+
+func (f *FakeQuerier) ListActivityReviewValues(ctx context.Context, arg db.ListActivityReviewValuesParams) ([]db.ListActivityReviewValuesRow, error) {
+	if f.ListActivityValuesFn != nil {
+		return f.ListActivityValuesFn(ctx, arg)
+	}
+	panic("ListActivityReviewValues não configurado no FakeQuerier")
+}
+
+func (f *FakeQuerier) MarkCompleteAssignmentReviewed(ctx context.Context, arg db.MarkCompleteAssignmentReviewedParams) (int64, error) {
+	if f.MarkCompleteReviewedFn != nil {
+		return f.MarkCompleteReviewedFn(ctx, arg)
+	}
+	panic("MarkCompleteAssignmentReviewed não configurado no FakeQuerier")
 }
 
 func (f *FakeQuerier) CreateClinicalRecord(ctx context.Context, arg db.CreateClinicalRecordParams) error {

@@ -4,6 +4,7 @@ package activity
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -29,6 +30,8 @@ var (
 	ErrInvalidStatus = errors.New("atividade precisa estar submetida para revisão")
 	// ErrSubmissionNotAllowed: atividade já concluída ou indisponível para resposta.
 	ErrSubmissionNotAllowed = errors.New("atividade não está disponível para resposta")
+	// ErrInvalidResponse: resposta ausente, incompleta ou inconsistente com o template.
+	ErrInvalidResponse = errors.New("resposta submetida não está íntegra")
 )
 
 type Service struct {
@@ -146,6 +149,49 @@ type Assignment struct {
 	DueAt       *time.Time `json:"dueAt"`
 	RespondedAt *time.Time `json:"respondedAt"`
 	CreatedAt   time.Time  `json:"createdAt"`
+}
+
+// ReviewField exposes exactly one typed answer in template display order.
+type ReviewField struct {
+	FieldID      uuid.UUID       `json:"fieldId"`
+	Code         string          `json:"code"`
+	Label        string          `json:"label"`
+	FieldType    string          `json:"fieldType"`
+	DisplayOrder int32           `json:"displayOrder"`
+	Config       json.RawMessage `json:"config"`
+	Kind         string          `json:"kind"`
+	Value        any             `json:"value"`
+}
+
+type AttachmentValue struct {
+	ID        uuid.UUID `json:"id"`
+	MimeType  string    `json:"mimeType"`
+	SizeBytes int32     `json:"sizeBytes"`
+}
+
+type ActivitySubmission struct {
+	ID          uuid.UUID     `json:"id"`
+	SubmittedAt time.Time     `json:"submittedAt"`
+	Fields      []ReviewField `json:"fields"`
+}
+
+// ActivityReviewDetail is a closed state machine at the HTTP boundary. Only
+// state=submitted is reviewable; invalid legacy rows fail closed.
+type ActivityReviewDetail struct {
+	State           string              `json:"state"`
+	ID              uuid.UUID           `json:"id"`
+	TemplateID      uuid.UUID           `json:"templateId"`
+	TemplateVersion int32               `json:"templateVersion"`
+	PatientID       uuid.UUID           `json:"patientId"`
+	PatientName     string              `json:"patientName"`
+	Title           string              `json:"title"`
+	Type            string              `json:"type"`
+	Status          string              `json:"status"`
+	DueAt           *time.Time          `json:"dueAt"`
+	FieldCount      int32               `json:"fieldCount"`
+	CreatedAt       time.Time           `json:"createdAt"`
+	ReviewedAt      *time.Time          `json:"reviewedAt,omitempty"`
+	Submission      *ActivitySubmission `json:"submission,omitempty"`
 }
 
 // AssignRequest é o corpo de POST /activities.
@@ -270,8 +316,9 @@ func (s *Service) ListAll(ctx context.Context) ([]Assignment, error) {
 	return out, nil
 }
 
-// Get devolve uma atribuição da organização.
-func (s *Service) Get(ctx context.Context, assignmentID uuid.UUID) (*Assignment, error) {
+// Get returns review metadata and, only when complete, every typed answer in
+// template order.
+func (s *Service) Get(ctx context.Context, assignmentID uuid.UUID) (*ActivityReviewDetail, error) {
 	id, ok := tenant.FromContext(ctx)
 	if !ok || id.Role != "psychologist" {
 		return nil, ErrPsychologistRequired
@@ -280,21 +327,85 @@ func (s *Service) Get(ctx context.Context, assignmentID uuid.UUID) (*Assignment,
 	if err != nil {
 		return nil, ErrPsychologistRequired
 	}
-	r, err := tenant.Queries(ctx, s.q).GetAssignmentDetailInOrg(ctx, db.GetAssignmentDetailInOrgParams{
+	q := tenant.Queries(ctx, s.q)
+	r, err := q.GetActivityReviewMetadata(ctx, db.GetActivityReviewMetadataParams{
 		ID: assignmentID, OrganizationID: id.OrgID, AssignerID: psy.ID,
 	})
 	if err != nil {
 		return nil, ErrAssignmentNotFound
 	}
-	return &Assignment{
-		ID: r.ID, TemplateID: r.TemplateID, PatientID: r.PatientID,
-		PatientName: r.PatientName, Title: r.Title, Type: r.Type, Status: r.Status,
-		DueAt: r.DueAt, RespondedAt: r.RespondedAt, CreatedAt: r.CreatedAt,
-	}, nil
+	detail := &ActivityReviewDetail{
+		ID: r.ID, TemplateID: r.TemplateID, TemplateVersion: r.TemplateVersion,
+		PatientID: r.PatientID, PatientName: r.PatientName,
+		Title: r.Title, Type: r.Type, Status: r.Status, DueAt: r.DueAt,
+		FieldCount: r.FieldCount, CreatedAt: r.CreatedAt, ReviewedAt: r.ReviewedAt,
+	}
+
+	if r.SubmissionComplete && r.ResponseID != "" && r.SubmittedAt != nil {
+		responseID, parseErr := uuid.Parse(r.ResponseID)
+		if parseErr != nil {
+			detail.State = "submission_invalid"
+			return detail, nil
+		}
+		rows, valuesErr := q.ListActivityReviewValues(ctx, db.ListActivityReviewValuesParams{
+			ResponseID: responseID, AssignmentID: assignmentID,
+			OrganizationID: id.OrgID, AssignerID: psy.ID,
+		})
+		if valuesErr != nil || len(rows) != int(r.FieldCount) {
+			detail.State = "submission_invalid"
+			return detail, nil
+		}
+		fields := make([]ReviewField, 0, len(rows))
+		for _, row := range rows {
+			field, conversionErr := reviewField(row)
+			if conversionErr != nil {
+				detail.State = "submission_invalid"
+				return detail, nil
+			}
+			fields = append(fields, field)
+		}
+		detail.Submission = &ActivitySubmission{
+			ID: responseID, SubmittedAt: *r.SubmittedAt, Fields: fields,
+		}
+		switch r.Status {
+		case "submitted":
+			detail.State = "submitted"
+		case "reviewed":
+			if r.ReviewedAt == nil {
+				detail.State = "submission_invalid"
+				detail.Submission = nil
+			} else {
+				detail.State = "reviewed"
+			}
+		default:
+			detail.State = "submission_invalid"
+			detail.Submission = nil
+		}
+		return detail, nil
+	}
+
+	switch r.Status {
+	case "pending", "in_progress":
+		if r.ResponseID == "" {
+			detail.State = "awaiting_response"
+		} else {
+			detail.State = "submission_invalid"
+		}
+	case "expired", "canceled":
+		if r.ResponseID == "" {
+			detail.State = "closed_without_submission"
+		} else {
+			detail.State = "submission_invalid"
+		}
+	default:
+		detail.State = "submission_invalid"
+	}
+	return detail, nil
 }
 
-// MarkReviewed conclui a revisão de uma atividade submetida.
-func (s *Service) MarkReviewed(ctx context.Context, assignmentID uuid.UUID) (*Assignment, error) {
+// MarkReviewed is an idempotent domain command. The SQL predicate repeats
+// ownership and complete-submission integrity before changing state.
+func (s *Service) MarkReviewed(ctx context.Context, assignmentID uuid.UUID) (*ActivityReviewDetail, error) {
 	id, ok := tenant.FromContext(ctx)
 	if !ok || id.Role != "psychologist" {
 		return nil, ErrPsychologistRequired
@@ -304,16 +415,17 @@ func (s *Service) MarkReviewed(ctx context.Context, assignmentID uuid.UUID) (*As
 	if err != nil {
 		return nil, ErrPsychologistRequired
 	}
-	current, err := q.GetAssignmentDetailInOrg(ctx, db.GetAssignmentDetailInOrgParams{
-		ID: assignmentID, OrganizationID: id.OrgID, AssignerID: psy.ID,
-	})
+	current, err := s.Get(ctx, assignmentID)
 	if err != nil {
-		return nil, ErrAssignmentNotFound
+		return nil, err
 	}
-	if current.Status != "submitted" {
+	if current.State == "reviewed" {
+		return current, nil
+	}
+	if current.State != "submitted" {
 		return nil, ErrInvalidStatus
 	}
-	updated, err := q.MarkAssignmentReviewed(ctx, db.MarkAssignmentReviewedParams{
+	updated, err := q.MarkCompleteAssignmentReviewed(ctx, db.MarkCompleteAssignmentReviewedParams{
 		ID: assignmentID, OrganizationID: id.OrgID, AssignerID: psy.ID,
 	})
 	if err != nil {
@@ -323,4 +435,41 @@ func (s *Service) MarkReviewed(ctx context.Context, assignmentID uuid.UUID) (*As
 		return nil, ErrInvalidStatus
 	}
 	return s.Get(ctx, assignmentID)
+}
+
+func reviewField(row db.ListActivityReviewValuesRow) (ReviewField, error) {
+	config := json.RawMessage(row.Config)
+	if len(config) == 0 {
+		config = json.RawMessage(`{}`)
+	}
+	field := ReviewField{
+		FieldID: row.FieldID, Code: row.FieldCode, Label: row.Label,
+		FieldType: row.FieldType, DisplayOrder: row.DisplayOrder, Config: config,
+	}
+	switch {
+	case row.ValueText != nil:
+		field.Kind, field.Value = "text", *row.ValueText
+	case row.ValueNumber.Valid:
+		number, err := row.ValueNumber.Float64Value()
+		if err != nil || !number.Valid {
+			return ReviewField{}, ErrInvalidResponse
+		}
+		field.Kind, field.Value = "number", number.Float64
+	case row.ValueBoolean != nil:
+		field.Kind, field.Value = "boolean", *row.ValueBoolean
+	case row.ValueDatetime != nil:
+		field.Kind, field.Value = "datetime", *row.ValueDatetime
+	case len(row.ValueJson) > 0:
+		if !json.Valid(row.ValueJson) {
+			return ReviewField{}, ErrInvalidResponse
+		}
+		field.Kind, field.Value = "json", json.RawMessage(row.ValueJson)
+	case row.AttachmentID != nil && row.MimeType != nil && row.SizeBytes != nil:
+		field.Kind, field.Value = "attachment", AttachmentValue{
+			ID: *row.AttachmentID, MimeType: *row.MimeType, SizeBytes: *row.SizeBytes,
+		}
+	default:
+		return ReviewField{}, ErrInvalidResponse
+	}
+	return field, nil
 }

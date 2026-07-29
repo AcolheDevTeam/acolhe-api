@@ -167,7 +167,7 @@ func (w *Workers) HandleLGPDExport(ctx context.Context, task *asynq.Task) error 
 func decodeLGPDExportTask(task *asynq.Task) (tasks.LGPDExportPayload, error) {
 	var payload tasks.LGPDExportPayload
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
-		return payload, fmt.Errorf("%w: %v", ErrInvalidLGPDExportTask, err)
+		return payload, fmt.Errorf("%w: %w", ErrInvalidLGPDExportTask, err)
 	}
 	if payload.RequestID.String() == "" ||
 		payload.RequestID.Version() == 0 ||

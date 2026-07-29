@@ -29,10 +29,7 @@ func BuildLGPDArchive(
 		return nil, err
 	}
 	jsonDocument := append(indented.Bytes(), '\n')
-	pdfDocument, err := buildPDF(patientName, requestedAt, jsonDocument)
-	if err != nil {
-		return nil, err
-	}
+	pdfDocument := buildPDF(patientName, requestedAt, jsonDocument)
 
 	var archive bytes.Buffer
 	writer := zip.NewWriter(&archive)
@@ -55,8 +52,9 @@ func writeArchiveFile(
 	modifiedAt time.Time,
 	content []byte,
 ) error {
-	header := &zip.FileHeader{Name: name, Method: zip.Deflate}
-	header.SetModTime(modifiedAt.UTC())
+	header := &zip.FileHeader{
+		Name: name, Method: zip.Deflate, Modified: modifiedAt.UTC(),
+	}
 	header.SetMode(0o600)
 	header.Comment = contentType
 	entry, err := writer.CreateHeader(header)
@@ -67,7 +65,7 @@ func writeArchiveFile(
 	return err
 }
 
-func buildPDF(patientName string, requestedAt time.Time, jsonDocument []byte) ([]byte, error) {
+func buildPDF(patientName string, requestedAt time.Time, jsonDocument []byte) []byte {
 	title := []string{
 		"ACOLHE - EXPORTACAO DE DADOS PESSOAIS",
 		"Titular: " + patientName,
@@ -138,7 +136,7 @@ func buildPDF(patientName string, requestedAt time.Time, jsonDocument []byte) ([
 		len(objects)+1,
 		xrefOffset,
 	)
-	return pdf.Bytes(), nil
+	return pdf.Bytes()
 }
 
 func pdfTextStream(lines []string) string {

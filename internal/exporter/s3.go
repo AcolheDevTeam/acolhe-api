@@ -94,7 +94,7 @@ func (store *S3ObjectStore) Put(
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 		return fmt.Errorf("S3 PUT retornou %d: %s", response.StatusCode, strings.TrimSpace(string(body)))

@@ -130,7 +130,7 @@ func sendSMTPStartTLS(
 	if err != nil {
 		return err
 	}
-	defer connection.Close()
+	defer func() { _ = connection.Close() }()
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = connection.SetDeadline(deadline)
 	}
@@ -139,7 +139,7 @@ func sendSMTPStartTLS(
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	if supported, _ := client.Extension("STARTTLS"); !supported {
 		return errors.New("servidor SMTP não oferece STARTTLS")
 	}

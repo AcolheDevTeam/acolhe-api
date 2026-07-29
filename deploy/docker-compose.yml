@@ -27,6 +27,25 @@ services:
       retries: 10
     # sem `ports:` — Postgres fica só na rede interna do compose, nunca exposto
 
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB}
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_CRON: "${BACKUP_CRON:-0 3 * * *}"
+      BACKUP_RETENTION_DAYS: "${BACKUP_RETENTION_DAYS:-7}"
+    entrypoint: ["sh", "/scripts/entrypoint.sh"]
+    volumes:
+      - ./backup:/scripts:ro
+      - ./backups:/backups
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped

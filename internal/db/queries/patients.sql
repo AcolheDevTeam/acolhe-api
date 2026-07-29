@@ -6,12 +6,12 @@ WHERE organization_id = @organization_id
 ORDER BY full_name;
 
 -- name: ListPatientsByPsychologist :many
-SELECT p.id, p.full_name, p.status, p.created_at
+SELECT p.id, p.full_name, p.status, r.status AS relationship_status, p.created_at
 FROM patient_profile p
 JOIN patient_relationship r ON r.patient_id = p.id
 WHERE p.organization_id = @organization_id
   AND r.psychologist_id = @psychologist_id
-  AND r.status = 'active'
+  AND r.status IN ('pending', 'active', 'paused')
   AND p.status <> 'deleted'
 ORDER BY p.full_name;
 
@@ -23,13 +23,14 @@ WHERE id = @id
   AND status <> 'deleted';
 
 -- name: GetPatientForPsychologist :one
-SELECT p.id, p.organization_id, p.full_name, p.birth_date, p.status, p.created_at
+SELECT p.id, p.organization_id, p.full_name, p.birth_date, p.status,
+       r.status AS relationship_status, p.created_at
 FROM patient_profile p
 JOIN patient_relationship r ON r.patient_id = p.id
 WHERE p.id = @id
   AND p.organization_id = @organization_id
   AND r.psychologist_id = @psychologist_id
-  AND r.status = 'active'
+  AND r.status IN ('pending', 'active', 'paused')
   AND p.status <> 'deleted';
 
 -- name: GetPatientByUserInOrg :one
@@ -43,6 +44,7 @@ WHERE user_id = @user_id
 INSERT INTO patient_profile (id, organization_id, full_name, birth_date)
 VALUES (@id, @organization_id, @full_name, @birth_date);
 
--- name: CreatePatientRelationship :exec
+-- name: CreatePatientRelationship :one
 INSERT INTO patient_relationship (patient_id, psychologist_id, status)
-VALUES (@patient_id, @psychologist_id, 'active');
+VALUES (@patient_id, @psychologist_id, 'pending')
+RETURNING id;

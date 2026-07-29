@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -74,6 +75,24 @@ func setupPool(t *testing.T) *pgxpool.Pool {
 	require.NoError(t, err)
 	_, err = pool.Exec(ctx, string(schema))
 	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `
+		WITH documents(scope, version, title, content, required) AS (
+		  VALUES
+		    ('health_data', '0.3', 'Dados de saúde',
+		     'Você autoriza que sua psicóloga registre prontuário, atividades e respostas, conforme Resolução CFP 01/2009.', true),
+		    ('communications', '0.3', 'Comunicações',
+		     'Receber lembretes de sessão e atividades por e-mail (sem conteúdo sensível no corpo da mensagem).', false),
+		    ('aggregate_statistics', '0.3', 'Estatística agregada',
+		     'Uso anônimo do Acolhe para métricas operacionais. Nunca cruzado com dados clínicos.', false)
+		)
+		INSERT INTO consent_document (
+		  scope, version, title, content, content_sha256, required, published_at
+		)
+		SELECT scope, version, title, content,
+		       encode(digest(content, 'sha256'), 'hex'), required,
+		       '2026-05-12T00:00:00-03:00'::timestamptz
+		FROM documents`)
+	require.NoError(t, err)
 	return pool
 }
 
@@ -96,8 +115,9 @@ func TestCreateSession_FullStack_AuditAndTx(t *testing.T) {
 		`INSERT INTO patient_profile (organization_id, full_name) VALUES ($1,'Paciente') RETURNING id`,
 		orgID).Scan(&patientID))
 	_, err := pool.Exec(ctx,
-		`INSERT INTO patient_relationship (patient_id, psychologist_id, status)
-		 VALUES ($1,$2,'active')`, patientID, psyID)
+		`INSERT INTO patient_relationship (
+		   patient_id, psychologist_id, status, requires_health_consent
+		 ) VALUES ($1,$2,'active',false)`, patientID, psyID)
 	require.NoError(t, err)
 
 	srv := httptest.NewServer(app.New(pool, db.New(pool), nil, "secret").Handler())
@@ -156,23 +176,105 @@ func TestClinicalBFFContracts_FullStack(t *testing.T) {
 	require.NoError(t, err)
 
 	resp := doJSON(t, srv.Client(), http.MethodPost, srv.URL+"/patients", token, map[string]any{
-		"fullName": "Paciente BFF", "birthDate": "1990-01-02",
+		"fullName": "Paciente BFF", "email": "paciente-bff@example.test", "birthDate": "1990-01-02",
 	})
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	var patient struct {
-		ID uuid.UUID `json:"id"`
+		ID                 uuid.UUID `json:"id"`
+		Status             string    `json:"status"`
+		RelationshipStatus string    `json:"relationshipStatus"`
+		Invitation         struct {
+			Token string `json:"token"`
+		} `json:"invitation"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&patient))
 	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, "onboarding", patient.Status)
+	assert.Equal(t, "pending", patient.RelationshipStatus)
+	require.NotEmpty(t, patient.Invitation.Token)
 	var relationships int
 	require.NoError(t, pool.QueryRow(ctx,
-		`SELECT count(*) FROM patient_relationship WHERE patient_id=$1 AND psychologist_id=$2 AND status='active'`,
+		`SELECT count(*) FROM patient_relationship WHERE patient_id=$1 AND psychologist_id=$2 AND status='pending'`,
 		patient.ID, psyID).Scan(&relationships))
 	assert.Equal(t, 1, relationships)
+
+	// No clinical write is available before the patient accepts the required
+	// versioned health-data consent.
+	resp = doJSON(t, srv.Client(), http.MethodPost, srv.URL+"/sessions", token, map[string]any{
+		"patientId": patient.ID, "occurredAt": "2026-07-28T10:00:00Z", "notes": "Evolução clínica",
+	})
+	require.Equal(t, http.StatusForbidden, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+	resp = doJSON(t, srv.Client(), http.MethodPost, srv.URL+"/activities", token, map[string]any{
+		"templateId": templateID, "patientId": patient.ID,
+	})
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	resp = doJSON(t, srv.Client(), http.MethodGet,
+		srv.URL+"/onboarding/invitations/"+patient.Invitation.Token, "", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var invitation struct {
+		Documents []struct {
+			ID       uuid.UUID `json:"id"`
+			Required bool      `json:"required"`
+		} `json:"documents"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&invitation))
+	require.NoError(t, resp.Body.Close())
+	var acceptedDocumentIDs []uuid.UUID
+	for _, document := range invitation.Documents {
+		acceptedDocumentIDs = append(acceptedDocumentIDs, document.ID)
+	}
+	require.NotEmpty(t, acceptedDocumentIDs)
+
+	resp = doJSON(t, srv.Client(), http.MethodPost,
+		srv.URL+"/onboarding/invitations/"+patient.Invitation.Token+"/accept", "", map[string]any{
+			"password":            "segredo-forte",
+			"acceptedDocumentIds": acceptedDocumentIDs,
+		})
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	// Replaying an accepted invitation is idempotent: it returns the original
+	// identities and does not append duplicate consents or audit evidence.
+	resp = doJSON(t, srv.Client(), http.MethodPost,
+		srv.URL+"/onboarding/invitations/"+patient.Invitation.Token+"/accept", "", map[string]any{
+			"password":            "segredo-forte",
+			"acceptedDocumentIds": acceptedDocumentIDs,
+		})
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var replay struct {
+		AlreadyAccepted bool `json:"alreadyAccepted"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&replay))
+	require.NoError(t, resp.Body.Close())
+	assert.True(t, replay.AlreadyAccepted)
+
+	var patientStatus, relationshipStatus string
+	var consentCount, onboardingAuditCount int
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT p.status, r.status
+		 FROM patient_profile p JOIN patient_relationship r ON r.patient_id=p.id
+		 WHERE p.id=$1`, patient.ID).Scan(&patientStatus, &relationshipStatus))
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT count(*) FROM consent WHERE patient_id=$1`, patient.ID).Scan(&consentCount))
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT count(*) FROM audit_log
+		 WHERE resource_type='patient_relationship' AND action='patient_onboarding_accepted'`,
+	).Scan(&onboardingAuditCount))
+	assert.Equal(t, "active", patientStatus)
+	assert.Equal(t, "active", relationshipStatus)
+	assert.Equal(t, len(acceptedDocumentIDs), consentCount)
+	assert.Equal(t, 1, onboardingAuditCount)
 
 	resp = doJSON(t, srv.Client(), http.MethodPost, srv.URL+"/sessions", token, map[string]any{
 		"patientId": patient.ID, "occurredAt": "2026-07-28T10:00:00Z", "notes": "Evolução clínica",
 	})
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("sessão pós-consentimento: status=%d body=%s", resp.StatusCode, body)
+	}
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	var createdSession struct {
 		ID uuid.UUID `json:"id"`
@@ -328,8 +430,9 @@ func TestRLSMetadataAndTenantIsolation(t *testing.T) {
 			 VALUES ($1, $2) RETURNING id`,
 			fixture.orgID, "Patient "+slug).Scan(&fixture.patientID))
 		_, err := pool.Exec(ctx,
-			`INSERT INTO patient_relationship (patient_id, psychologist_id, status)
-			 VALUES ($1, $2, 'active')`,
+			`INSERT INTO patient_relationship (
+			   patient_id, psychologist_id, status, requires_health_consent
+			 ) VALUES ($1, $2, 'active', false)`,
 			fixture.patientID, fixture.psyID)
 		require.NoError(t, err)
 		require.NoError(t, pool.QueryRow(ctx,

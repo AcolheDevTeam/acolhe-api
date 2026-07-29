@@ -29,6 +29,15 @@ func (h *Handler) create(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "corpo inválido")
 	}
+	if key := c.Request().Header.Get("Idempotency-Key"); key != "" {
+		parsed, err := uuid.Parse(key)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "Idempotency-Key inválida")
+		}
+		req.IdempotencyKey = parsed
+	} else {
+		req.IdempotencyKey = uuid.New()
+	}
 	p, err := h.svc.Create(c.Request().Context(), req)
 	if err != nil {
 		switch {

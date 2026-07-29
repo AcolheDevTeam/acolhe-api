@@ -163,13 +163,28 @@ type ClinicalRecordVersion struct {
 }
 
 type Consent struct {
-	ID              uuid.UUID   `json:"id"`
-	UserID          uuid.UUID   `json:"user_id"`
-	Scope           string      `json:"scope"`
-	DocumentVersion string      `json:"document_version"`
-	AcceptedAt      time.Time   `json:"accepted_at"`
-	IpAddress       *netip.Addr `json:"ip_address"`
-	CreatedAt       time.Time   `json:"created_at"`
+	ID         uuid.UUID   `json:"id"`
+	UserID     uuid.UUID   `json:"user_id"`
+	PatientID  *uuid.UUID  `json:"patient_id"`
+	DocumentID uuid.UUID   `json:"document_id"`
+	Accepted   bool        `json:"accepted"`
+	DecidedAt  time.Time   `json:"decided_at"`
+	IpAddress  *netip.Addr `json:"ip_address"`
+	UserAgent  *string     `json:"user_agent"`
+	CreatedAt  time.Time   `json:"created_at"`
+}
+
+type ConsentDocument struct {
+	ID            uuid.UUID  `json:"id"`
+	Scope         string     `json:"scope"`
+	Version       string     `json:"version"`
+	Title         string     `json:"title"`
+	Content       string     `json:"content"`
+	ContentSha256 string     `json:"content_sha256"`
+	Required      bool       `json:"required"`
+	PublishedAt   time.Time  `json:"published_at"`
+	RetiredAt     *time.Time `json:"retired_at"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 type Document struct {
@@ -226,6 +241,22 @@ type Organization struct {
 	UpdatedAt time.Time  `json:"updated_at"`
 }
 
+type PatientInvitation struct {
+	ID              uuid.UUID  `json:"id"`
+	PatientID       uuid.UUID  `json:"patient_id"`
+	RelationshipID  uuid.UUID  `json:"relationship_id"`
+	Email           string     `json:"email"`
+	TokenDigest     []byte     `json:"token_digest"`
+	IdempotencyKey  uuid.UUID  `json:"idempotency_key"`
+	CreatedByUserID uuid.UUID  `json:"created_by_user_id"`
+	Status          string     `json:"status"`
+	ExpiresAt       time.Time  `json:"expires_at"`
+	AcceptedAt      *time.Time `json:"accepted_at"`
+	DeclinedAt      *time.Time `json:"declined_at"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
 type PatientProfile struct {
 	ID             uuid.UUID   `json:"id"`
 	UserID         *uuid.UUID  `json:"user_id"`
@@ -240,15 +271,16 @@ type PatientProfile struct {
 }
 
 type PatientRelationship struct {
-	ID             uuid.UUID  `json:"id"`
-	PatientID      uuid.UUID  `json:"patient_id"`
-	PsychologistID uuid.UUID  `json:"psychologist_id"`
-	ConsentID      *uuid.UUID `json:"consent_id"`
-	Status         string     `json:"status"`
-	EndReason      *string    `json:"end_reason"`
-	StartedAt      time.Time  `json:"started_at"`
-	EndedAt        *time.Time `json:"ended_at"`
-	CreatedAt      time.Time  `json:"created_at"`
+	ID                    uuid.UUID  `json:"id"`
+	PatientID             uuid.UUID  `json:"patient_id"`
+	PsychologistID        uuid.UUID  `json:"psychologist_id"`
+	ConsentID             *uuid.UUID `json:"consent_id"`
+	Status                string     `json:"status"`
+	RequiresHealthConsent bool       `json:"requires_health_consent"`
+	EndReason             *string    `json:"end_reason"`
+	StartedAt             *time.Time `json:"started_at"`
+	EndedAt               *time.Time `json:"ended_at"`
+	CreatedAt             time.Time  `json:"created_at"`
 }
 
 type Plan struct {

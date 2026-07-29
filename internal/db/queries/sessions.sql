@@ -7,7 +7,7 @@ JOIN patient_profile p ON p.id = r.patient_id
 WHERE r.patient_id = @patient_id
   AND r.psychologist_id = @psychologist_id
   AND p.organization_id = @organization_id
-  AND r.status = 'active';
+  AND has_active_clinical_relationship(r.patient_id, r.psychologist_id);
 
 -- name: CreateSession :one
 INSERT INTO session (patient_id, psychologist_id, occurred_at, status)

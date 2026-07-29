@@ -20,6 +20,7 @@ import (
 	"github.com/joycesilva/acolhe-api/internal/document"
 	"github.com/joycesilva/acolhe-api/internal/middleware"
 	"github.com/joycesilva/acolhe-api/internal/notification"
+	"github.com/joycesilva/acolhe-api/internal/onboarding"
 	"github.com/joycesilva/acolhe-api/internal/patient"
 	"github.com/joycesilva/acolhe-api/internal/session"
 )
@@ -62,6 +63,7 @@ func New(pool *pgxpool.Pool, q db.Querier, queue *asynq.Client, jwtSecret string
 
 	// Domínios (mesmo padrão handler+service para todos).
 	account.NewHandler(account.NewService(q, jwtSecret)).Register(e)
+	onboarding.NewHandler(onboarding.NewService(q)).Register(e)
 	patient.NewHandler(patient.NewService(q, queue)).Register(e)
 	session.NewHandler(session.NewService(q)).Register(e)
 	appointment.NewHandler(appointment.NewService(q)).Register(e)

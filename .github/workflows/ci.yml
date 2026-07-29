@@ -62,6 +62,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Testar regra de isolamento multi-tenant
+        run: ./scripts/test-semgrep-multitenancy.sh
+
       - name: Semgrep — regras de isolamento multi-tenant
         run: semgrep --config .semgrep/ --error
         env:

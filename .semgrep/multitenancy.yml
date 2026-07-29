@@ -25,9 +25,6 @@ rules:
           - pattern: $DB.QueryContext($CTX, $QUERY, ...)
           - pattern: $DB.QueryRowContext($CTX, $QUERY, ...)
           - pattern: $DB.ExecContext($CTX, $QUERY, ...)
-      - metavariable-pattern:
+      - metavariable-regex:
           metavariable: $QUERY
-          language: generic
-          patterns:
-            - pattern-regex: '(?is)\b(?:select\b[\s\S]*?\bfrom\s+|update\s+|delete\s+from\s+)(?:"?[a-z_][a-z0-9_]*"?\.)?"?(?:patient_profile|appointment|clinical_note|organization_member)"?\b'
-            - pattern-not-regex: '(?i)organization_id'
+          regex: '(?is)^(?![\s\S]*\borganization_id\b)[\s\S]*\b(?:select\b[\s\S]*?\bfrom\s+|update\s+|delete\s+from\s+)(?:"?[a-z_][a-z0-9_]*"?\.)?"?(?:patient_profile|appointment|clinical_note|organization_member)"?\b'

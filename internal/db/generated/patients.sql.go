@@ -13,39 +13,44 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createPatient = `-- name: CreatePatient :one
-INSERT INTO patient_profile (organization_id, full_name, birth_date)
-VALUES ($1, $2, $3)
-RETURNING id, organization_id, full_name, birth_date, status, created_at
+const createPatient = `-- name: CreatePatient :exec
+INSERT INTO patient_profile (id, organization_id, full_name, birth_date)
+VALUES ($1, $2, $3, $4)
 `
 
 type CreatePatientParams struct {
-	OrganizationID uuid.UUID   `json:"organization_id"`
-	FullName       string      `json:"full_name"`
-	BirthDate      pgtype.Date `json:"birth_date"`
-}
-
-type CreatePatientRow struct {
 	ID             uuid.UUID   `json:"id"`
 	OrganizationID uuid.UUID   `json:"organization_id"`
 	FullName       string      `json:"full_name"`
 	BirthDate      pgtype.Date `json:"birth_date"`
-	Status         string      `json:"status"`
-	CreatedAt      time.Time   `json:"created_at"`
 }
 
-func (q *Queries) CreatePatient(ctx context.Context, arg CreatePatientParams) (CreatePatientRow, error) {
-	row := q.db.QueryRow(ctx, createPatient, arg.OrganizationID, arg.FullName, arg.BirthDate)
-	var i CreatePatientRow
-	err := row.Scan(
-		&i.ID,
-		&i.OrganizationID,
-		&i.FullName,
-		&i.BirthDate,
-		&i.Status,
-		&i.CreatedAt,
+func (q *Queries) CreatePatient(ctx context.Context, arg CreatePatientParams) error {
+	_, err := q.db.Exec(ctx, createPatient,
+		arg.ID,
+		arg.OrganizationID,
+		arg.FullName,
+		arg.BirthDate,
 	)
-	return i, err
+	return err
+}
+
+const createPatientRelationship = `-- name: CreatePatientRelationship :one
+INSERT INTO patient_relationship (patient_id, psychologist_id, status)
+VALUES ($1, $2, 'pending')
+RETURNING id
+`
+
+type CreatePatientRelationshipParams struct {
+	PatientID      uuid.UUID `json:"patient_id"`
+	PsychologistID uuid.UUID `json:"psychologist_id"`
+}
+
+func (q *Queries) CreatePatientRelationship(ctx context.Context, arg CreatePatientRelationshipParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createPatientRelationship, arg.PatientID, arg.PsychologistID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getPatient = `-- name: GetPatient :one
@@ -84,6 +89,85 @@ func (q *Queries) GetPatient(ctx context.Context, arg GetPatientParams) (GetPati
 	return i, err
 }
 
+const getPatientByUserInOrg = `-- name: GetPatientByUserInOrg :one
+SELECT id, organization_id, full_name, birth_date, status, created_at
+FROM patient_profile
+WHERE user_id = $1
+  AND organization_id = $2
+  AND status <> 'deleted'
+`
+
+type GetPatientByUserInOrgParams struct {
+	UserID         *uuid.UUID `json:"user_id"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
+}
+
+type GetPatientByUserInOrgRow struct {
+	ID             uuid.UUID   `json:"id"`
+	OrganizationID uuid.UUID   `json:"organization_id"`
+	FullName       string      `json:"full_name"`
+	BirthDate      pgtype.Date `json:"birth_date"`
+	Status         string      `json:"status"`
+	CreatedAt      time.Time   `json:"created_at"`
+}
+
+func (q *Queries) GetPatientByUserInOrg(ctx context.Context, arg GetPatientByUserInOrgParams) (GetPatientByUserInOrgRow, error) {
+	row := q.db.QueryRow(ctx, getPatientByUserInOrg, arg.UserID, arg.OrganizationID)
+	var i GetPatientByUserInOrgRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.FullName,
+		&i.BirthDate,
+		&i.Status,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getPatientForPsychologist = `-- name: GetPatientForPsychologist :one
+SELECT p.id, p.organization_id, p.full_name, p.birth_date, p.status,
+       r.status AS relationship_status, p.created_at
+FROM patient_profile p
+JOIN patient_relationship r ON r.patient_id = p.id
+WHERE p.id = $1
+  AND p.organization_id = $2
+  AND r.psychologist_id = $3
+  AND r.status IN ('pending', 'active', 'paused')
+  AND p.status <> 'deleted'
+`
+
+type GetPatientForPsychologistParams struct {
+	ID             uuid.UUID `json:"id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	PsychologistID uuid.UUID `json:"psychologist_id"`
+}
+
+type GetPatientForPsychologistRow struct {
+	ID                 uuid.UUID   `json:"id"`
+	OrganizationID     uuid.UUID   `json:"organization_id"`
+	FullName           string      `json:"full_name"`
+	BirthDate          pgtype.Date `json:"birth_date"`
+	Status             string      `json:"status"`
+	RelationshipStatus string      `json:"relationship_status"`
+	CreatedAt          time.Time   `json:"created_at"`
+}
+
+func (q *Queries) GetPatientForPsychologist(ctx context.Context, arg GetPatientForPsychologistParams) (GetPatientForPsychologistRow, error) {
+	row := q.db.QueryRow(ctx, getPatientForPsychologist, arg.ID, arg.OrganizationID, arg.PsychologistID)
+	var i GetPatientForPsychologistRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.FullName,
+		&i.BirthDate,
+		&i.Status,
+		&i.RelationshipStatus,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listPatientsByOrg = `-- name: ListPatientsByOrg :many
 SELECT id, full_name, status, created_at
 FROM patient_profile
@@ -112,6 +196,56 @@ func (q *Queries) ListPatientsByOrg(ctx context.Context, organizationID uuid.UUI
 			&i.ID,
 			&i.FullName,
 			&i.Status,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPatientsByPsychologist = `-- name: ListPatientsByPsychologist :many
+SELECT p.id, p.full_name, p.status, r.status AS relationship_status, p.created_at
+FROM patient_profile p
+JOIN patient_relationship r ON r.patient_id = p.id
+WHERE p.organization_id = $1
+  AND r.psychologist_id = $2
+  AND r.status IN ('pending', 'active', 'paused')
+  AND p.status <> 'deleted'
+ORDER BY p.full_name
+`
+
+type ListPatientsByPsychologistParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	PsychologistID uuid.UUID `json:"psychologist_id"`
+}
+
+type ListPatientsByPsychologistRow struct {
+	ID                 uuid.UUID `json:"id"`
+	FullName           string    `json:"full_name"`
+	Status             string    `json:"status"`
+	RelationshipStatus string    `json:"relationship_status"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+func (q *Queries) ListPatientsByPsychologist(ctx context.Context, arg ListPatientsByPsychologistParams) ([]ListPatientsByPsychologistRow, error) {
+	rows, err := q.db.Query(ctx, listPatientsByPsychologist, arg.OrganizationID, arg.PsychologistID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPatientsByPsychologistRow
+	for rows.Next() {
+		var i ListPatientsByPsychologistRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FullName,
+			&i.Status,
+			&i.RelationshipStatus,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

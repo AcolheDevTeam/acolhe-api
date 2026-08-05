@@ -20,6 +20,7 @@ import (
 	"github.com/joycesilva/acolhe-api/internal/document"
 	"github.com/joycesilva/acolhe-api/internal/middleware"
 	"github.com/joycesilva/acolhe-api/internal/notification"
+	"github.com/joycesilva/acolhe-api/internal/onboarding"
 	"github.com/joycesilva/acolhe-api/internal/patient"
 	"github.com/joycesilva/acolhe-api/internal/session"
 )
@@ -41,7 +42,10 @@ func New(pool *pgxpool.Pool, q db.Querier, queue *asynq.Client, jwtSecret string
 	e.Use(emw.CORSWithConfig(emw.CORSConfig{
 		AllowOrigins: []string{"*"},
 		AllowHeaders: []string{echo.HeaderAuthorization, echo.HeaderContentType},
-		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodOptions},
+		AllowMethods: []string{
+			http.MethodGet, http.MethodPost, http.MethodPut,
+			http.MethodPatch, http.MethodDelete, http.MethodOptions,
+		},
 	}))
 
 	// Pipeline (spec §4.2): Auth (valida JWT) → Tenant (orgId no context) →
@@ -62,6 +66,7 @@ func New(pool *pgxpool.Pool, q db.Querier, queue *asynq.Client, jwtSecret string
 
 	// Domínios (mesmo padrão handler+service para todos).
 	account.NewHandler(account.NewService(q, jwtSecret)).Register(e)
+	onboarding.NewHandler(onboarding.NewService(q)).Register(e)
 	patient.NewHandler(patient.NewService(q, queue)).Register(e)
 	session.NewHandler(session.NewService(q)).Register(e)
 	appointment.NewHandler(appointment.NewService(q)).Register(e)

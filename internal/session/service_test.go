@@ -64,14 +64,13 @@ func setupDB(t *testing.T) *pgxpool.Pool {
 }
 
 // fixtures cria org + usuário + psicólogo + paciente + sessão e devolve os ids.
-func seedSession(t *testing.T, pool *pgxpool.Pool) (orgID, patientID uuid.UUID) {
+func seedSession(t *testing.T, pool *pgxpool.Pool) (orgID, userID, patientID uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
 
 	require.NoError(t, pool.QueryRow(ctx,
 		`INSERT INTO organization (name, slug) VALUES ('Org 1', 'org-1') RETURNING id`).Scan(&orgID))
 
-	var userID uuid.UUID
 	require.NoError(t, pool.QueryRow(ctx,
 		`INSERT INTO "user" (organization_id, email, password_hash, role)
 		 VALUES ($1, 'psi@org1.dev', 'x', 'psychologist') RETURNING id`, orgID).Scan(&userID))
@@ -90,7 +89,7 @@ func seedSession(t *testing.T, pool *pgxpool.Pool) (orgID, patientID uuid.UUID) 
 		 VALUES ($1, $2, now(), 'completed')`, patientID, psyID)
 	require.NoError(t, err)
 
-	return orgID, patientID
+	return orgID, userID, patientID
 }
 
 // TestGetSessionsByPatient_OrgIsolation: org2 não enxerga sessões da org1.
@@ -99,17 +98,26 @@ func TestGetSessionsByPatient_OrgIsolation(t *testing.T) {
 	q := db.New(pool)
 	svc := session.NewService(q)
 
-	org1, patientID := seedSession(t, pool)
+	org1, user1, patientID := seedSession(t, pool)
 
 	// org1 vê a sessão do seu paciente.
-	ctx1 := tenant.WithIdentity(context.Background(), tenant.Identity{OrgID: org1})
+	ctx1 := tenant.WithIdentity(context.Background(), tenant.Identity{OrgID: org1, UserID: user1, Role: "psychologist"})
 	got1, err := svc.List(ctx1, patientID)
 	require.NoError(t, err)
 	assert.Len(t, got1, 1, "org1 deve ver a própria sessão")
 
 	// org2 (outra organização) NÃO pode ver dados da org1.
-	org2 := uuid.New()
-	ctx2 := tenant.WithIdentity(context.Background(), tenant.Identity{OrgID: org2})
+	var org2, user2 uuid.UUID
+	require.NoError(t, pool.QueryRow(context.Background(),
+		`INSERT INTO organization (name, slug) VALUES ('Org 2', 'org-2') RETURNING id`).Scan(&org2))
+	require.NoError(t, pool.QueryRow(context.Background(),
+		`INSERT INTO "user" (organization_id, email, password_hash, role)
+		 VALUES ($1, 'psi@org2.dev', 'x', 'psychologist') RETURNING id`, org2).Scan(&user2))
+	_, err = pool.Exec(context.Background(),
+		`INSERT INTO psychologist_profile (user_id, full_name, crp_number, crp_state)
+		 VALUES ($1, 'Dra. Org2', '222', 'SP')`, user2)
+	require.NoError(t, err)
+	ctx2 := tenant.WithIdentity(context.Background(), tenant.Identity{OrgID: org2, UserID: user2, Role: "psychologist"})
 	got2, err := svc.List(ctx2, patientID)
 	require.NoError(t, err)
 	assert.Empty(t, got2, "org2 não pode enxergar dados da org1")

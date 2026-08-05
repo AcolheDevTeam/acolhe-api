@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -216,6 +217,32 @@ func TestClinicalBFFContracts_FullStack(t *testing.T) {
 		`SELECT count(*) FROM patient_relationship WHERE patient_id=$1 AND psychologist_id=$2 AND status='pending'`,
 		patient.ID, psyID).Scan(&relationships))
 	assert.Equal(t, 1, relationships)
+
+	// Public invitation reads run without tenant claims. Exercise the endpoint
+	// through a production-like role that cannot bypass patient_profile RLS.
+	_, err = pool.Exec(ctx, `CREATE ROLE acolhe_invitation_test NOLOGIN NOSUPERUSER NOBYPASSRLS`)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `GRANT USAGE ON SCHEMA public TO acolhe_invitation_test`)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `GRANT SELECT ON consent_document TO acolhe_invitation_test`)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `GRANT EXECUTE ON FUNCTION get_patient_invitation(bytea) TO acolhe_invitation_test`)
+	require.NoError(t, err)
+	rlsConfig, err := pgxpool.ParseConfig(pool.Config().ConnString())
+	require.NoError(t, err)
+	rlsConfig.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		_, err := conn.Exec(ctx, `SET ROLE acolhe_invitation_test`)
+		return err
+	}
+	rlsPool, err := pgxpool.NewWithConfig(ctx, rlsConfig)
+	require.NoError(t, err)
+	t.Cleanup(rlsPool.Close)
+	rlsServer := httptest.NewServer(app.New(rlsPool, db.New(rlsPool), nil, "secret").Handler())
+	t.Cleanup(rlsServer.Close)
+	rlsResponse := doJSON(t, rlsServer.Client(), http.MethodGet,
+		rlsServer.URL+"/onboarding/invitations/"+patient.Invitation.Token, "", nil)
+	require.Equal(t, http.StatusOK, rlsResponse.StatusCode)
+	require.NoError(t, rlsResponse.Body.Close())
 
 	// No clinical write is available before the patient accepts the required
 	// versioned health-data consent.

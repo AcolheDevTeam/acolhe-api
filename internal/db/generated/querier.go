@@ -51,6 +51,7 @@ type Querier interface {
 	// Isolamento multi-tenant via patient_profile.organization_id em cada ramo do UNION.
 	GetPatientTimeline(ctx context.Context, arg GetPatientTimelineParams) ([]GetPatientTimelineRow, error)
 	GetPsychologistByUser(ctx context.Context, userID uuid.UUID) (GetPsychologistByUserRow, error)
+	GetReissuableInvitationForPatient(ctx context.Context, arg GetReissuableInvitationForPatientParams) (GetReissuableInvitationForPatientRow, error)
 	GetSession(ctx context.Context, arg GetSessionParams) (GetSessionRow, error)
 	// Isolamento multi-tenant via patient_profile.organization_id.
 	GetSessionsByPatient(ctx context.Context, arg GetSessionsByPatientParams) ([]GetSessionsByPatientRow, error)

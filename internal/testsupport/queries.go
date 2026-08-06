@@ -26,6 +26,8 @@ type FakeQuerier struct {
 	GetActiveRelationshipFn     func(ctx context.Context, arg db.GetActiveRelationshipParams) (db.GetActiveRelationshipRow, error)
 	GetPatientExportAccessFn    func(ctx context.Context, arg db.GetPatientExportAccessParams) (db.GetPatientExportAccessRow, error)
 	GetPatientForPsychFn        func(ctx context.Context, arg db.GetPatientForPsychologistParams) (db.GetPatientForPsychologistRow, error)
+	GetReissuableInvitationFn   func(ctx context.Context, arg db.GetReissuableInvitationForPatientParams) (db.GetReissuableInvitationForPatientRow, error)
+	ReissuePatientInvitationFn  func(ctx context.Context, arg db.ReissuePatientInvitationParams) (db.ReissuePatientInvitationRow, error)
 	CreateLGPDExportRequestFn   func(ctx context.Context, arg db.CreateLGPDExportRequestParams) (db.LgpdExportRequest, error)
 	MarkLGPDExportQueueFailedFn func(ctx context.Context, arg db.MarkLGPDExportQueueFailedParams) (int64, error)
 	GetActivityReviewFn         func(ctx context.Context, arg db.GetActivityReviewMetadataParams) (db.GetActivityReviewMetadataRow, error)
@@ -53,6 +55,20 @@ func (f *FakeQuerier) GetPatientForPsychologist(ctx context.Context, arg db.GetP
 		return f.GetPatientForPsychFn(ctx, arg)
 	}
 	panic("GetPatientForPsychologist não configurado no FakeQuerier")
+}
+
+func (f *FakeQuerier) GetReissuableInvitationForPatient(ctx context.Context, arg db.GetReissuableInvitationForPatientParams) (db.GetReissuableInvitationForPatientRow, error) {
+	if f.GetReissuableInvitationFn != nil {
+		return f.GetReissuableInvitationFn(ctx, arg)
+	}
+	panic("GetReissuableInvitationForPatient não configurado no FakeQuerier")
+}
+
+func (f *FakeQuerier) ReissuePatientInvitation(ctx context.Context, arg db.ReissuePatientInvitationParams) (db.ReissuePatientInvitationRow, error) {
+	if f.ReissuePatientInvitationFn != nil {
+		return f.ReissuePatientInvitationFn(ctx, arg)
+	}
+	panic("ReissuePatientInvitation não configurado no FakeQuerier")
 }
 
 func (f *FakeQuerier) PatientInOrg(ctx context.Context, arg db.PatientInOrgParams) (bool, error) {

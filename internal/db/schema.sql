@@ -608,6 +608,31 @@ CREATE TRIGGER document_active_relationship
   BEFORE INSERT OR UPDATE OF patient_id, psychologist_id ON document
   FOR EACH ROW EXECUTE FUNCTION enforce_active_clinical_relationship('psychologist_id');
 
+-- Public invitation reads cannot carry tenant identity. Keep the lookup behind
+-- a security-definer boundary so patient_profile RLS remains closed while the
+-- unguessable token digest grants access only to the matching invitation.
+CREATE OR REPLACE FUNCTION get_patient_invitation(
+  supplied_token_digest bytea
+) RETURNS jsonb AS $$
+  SELECT jsonb_build_object(
+    'id', i.id,
+    'patientId', i.patient_id,
+    'relationshipId', i.relationship_id,
+    'email', i.email,
+    'status', i.status,
+    'expiresAt', i.expires_at,
+    'patientName', p.full_name,
+    'psychologistName', psy.full_name,
+    'crpNumber', psy.crp_number,
+    'crpState', psy.crp_state
+  )
+  FROM patient_invitation i
+  JOIN patient_profile p ON p.id = i.patient_id
+  JOIN patient_relationship r ON r.id = i.relationship_id
+  JOIN psychologist_profile psy ON psy.id = r.psychologist_id
+  WHERE i.token_digest = supplied_token_digest;
+$$ LANGUAGE SQL STABLE SECURITY DEFINER SET search_path = public, pg_temp;
+
 -- The public invitation endpoint supplies only an opaque token digest. The
 -- entire identity/consent/relationship transition happens under one row lock.
 CREATE OR REPLACE FUNCTION accept_patient_invitation(

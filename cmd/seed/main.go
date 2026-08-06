@@ -95,8 +95,9 @@ func main() {
 			continue
 		}
 		_, _ = pool.Exec(ctx,
-			`INSERT INTO patient_relationship (patient_id, psychologist_id, status)
-			 VALUES ($1, $2, 'active')`, patID, psyID)
+			`INSERT INTO patient_relationship (
+			   patient_id, psychologist_id, status, requires_health_consent
+			 ) VALUES ($1, $2, 'active', false)`, patID, psyID)
 	}
 
 	fmt.Println("✅ Seed concluído.")

@@ -24,20 +24,39 @@ SET token_digest = @token_digest,
     expires_at = @expires_at,
     updated_at = now()
 WHERE id = @id
-  AND status = 'pending'
+  AND status IN ('pending', 'expired')
 RETURNING id, expires_at;
 
--- name: GetInvitationByDigest :one
-SELECT i.id, i.patient_id, i.relationship_id, i.email, i.status, i.expires_at,
-       p.full_name AS patient_name,
-       psy.full_name AS psychologist_name,
-       psy.crp_number,
-       psy.crp_state
+-- name: GetReissuableInvitationForPatient :one
+SELECT i.id, i.email
 FROM patient_invitation i
-JOIN patient_profile p ON p.id = i.patient_id
 JOIN patient_relationship r ON r.id = i.relationship_id
-JOIN psychologist_profile psy ON psy.id = r.psychologist_id
-WHERE i.token_digest = @token_digest;
+JOIN patient_profile p ON p.id = i.patient_id
+WHERE i.patient_id = @patient_id
+  AND p.organization_id = @organization_id
+  AND r.psychologist_id = @psychologist_id
+  AND r.status = 'pending'
+  AND i.status IN ('pending', 'expired')
+ORDER BY i.created_at DESC
+LIMIT 1
+FOR UPDATE OF i;
+
+-- name: GetInvitationByDigest :one
+WITH invitation AS (
+  SELECT get_patient_invitation(@token_digest) AS result
+)
+SELECT (result->>'id')::uuid AS id,
+       (result->>'patientId')::uuid AS patient_id,
+       (result->>'relationshipId')::uuid AS relationship_id,
+       (result->>'email')::text AS email,
+       (result->>'status')::text AS status,
+       (result->>'expiresAt')::timestamptz AS expires_at,
+       (result->>'patientName')::text AS patient_name,
+       (result->>'psychologistName')::text AS psychologist_name,
+       (result->>'crpNumber')::text AS crp_number,
+       (result->>'crpState')::text AS crp_state
+FROM invitation
+WHERE result IS NOT NULL;
 
 -- name: ListPublishedConsentDocuments :many
 SELECT id, scope, version, title, content, content_sha256, required, published_at

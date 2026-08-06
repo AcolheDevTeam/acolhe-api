@@ -55,16 +55,34 @@ export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="/var/run/docker.sock"
 > `atlas login`). O projeto fixa o Atlas **v0.31.0** community para manter o lint no CI sem conta.
 
 ## Primeiros passos
+
+Com Docker Desktop ou Colima rodando, inicie todo o backend com:
+
 ```bash
-cp .env.example .env
-colima start        # daemon Docker (ver seção acima)
-make db-up          # sobe Postgres + Redis (docker compose)
-make apply          # aplica migrations (Atlas; precisa de DATABASE_URL)
-make generate       # regenera tipos do sqlc (já versionados)
-make seed           # cria org/psicólogo/pacientes de exemplo
-make dev            # API com hot reload (air)  — ou `make run`
+make dev
 ```
 
+O Compose sobe PostgreSQL, Redis e a API, aplica as migrations e executa o seed
+automaticamente. A API fica em `http://localhost:8080` e reinicia quando um
+arquivo Go ou SQL e alterado.
+
+PostgreSQL e Redis usam volumes nomeados, portanto os dados continuam preservados
+entre reinicializacoes. `Ctrl+C` encerra os servicos; no proximo `make dev`, os
+mesmos volumes e containers sao reutilizados.
+
+Para remover os containers sem apagar os dados:
+
+```bash
+docker compose down
+```
+
+Para também apagar os volumes e recriar o banco do zero:
+
+```bash
+docker compose down --volumes
+```
+
+Login do seed: `psi@acolhe.dev` / `acolhe123`.
 `GET /health` confirma a aplicação e a conexão com o banco.
 
 ## Fluxo de schema

@@ -246,3 +246,68 @@ func TestPatientReadPredicatesCarryOrganizationAndPsychologist(t *testing.T) {
 	_, err = service.Get(ctx, patientID)
 	assert.ErrorIs(t, err, patient.ErrNotFound)
 }
+
+func TestReissueInvitationScopesPatientAndReplacesToken(t *testing.T) {
+	identity := tenant.Identity{
+		UserID: uuid.New(), OrgID: uuid.New(), Role: "psychologist",
+	}
+	psychologistID, patientID, invitationID := uuid.New(), uuid.New(), uuid.New()
+	expiresAt := time.Now().UTC().Add(7 * 24 * time.Hour)
+	var digest []byte
+	fake := &testsupport.FakeQuerier{
+		GetPsychologistByUserFn: func(_ context.Context, userID uuid.UUID) (db.GetPsychologistByUserRow, error) {
+			assert.Equal(t, identity.UserID, userID)
+			return db.GetPsychologistByUserRow{ID: psychologistID}, nil
+		},
+		GetReissuableInvitationFn: func(
+			_ context.Context,
+			arg db.GetReissuableInvitationForPatientParams,
+		) (db.GetReissuableInvitationForPatientRow, error) {
+			assert.Equal(t, patientID, arg.PatientID)
+			assert.Equal(t, identity.OrgID, arg.OrganizationID)
+			assert.Equal(t, psychologistID, arg.PsychologistID)
+			return db.GetReissuableInvitationForPatientRow{
+				ID: invitationID, Email: "patient@example.test",
+			}, nil
+		},
+		ReissuePatientInvitationFn: func(
+			_ context.Context,
+			arg db.ReissuePatientInvitationParams,
+		) (db.ReissuePatientInvitationRow, error) {
+			assert.Equal(t, invitationID, arg.ID)
+			digest = arg.TokenDigest
+			return db.ReissuePatientInvitationRow{ID: invitationID, ExpiresAt: expiresAt}, nil
+		},
+	}
+
+	invitation, err := patient.NewService(fake, nil).ReissueInvitation(
+		tenant.WithIdentity(context.Background(), identity), patientID,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "patient@example.test", invitation.Email)
+	assert.Equal(t, expiresAt, invitation.ExpiresAt)
+	assert.Len(t, invitation.Token, 43)
+	assert.Len(t, digest, 32)
+}
+
+func TestReissueInvitationHidesUnavailablePatient(t *testing.T) {
+	identity := tenant.Identity{
+		UserID: uuid.New(), OrgID: uuid.New(), Role: "psychologist",
+	}
+	fake := &testsupport.FakeQuerier{
+		GetPsychologistByUserFn: func(context.Context, uuid.UUID) (db.GetPsychologistByUserRow, error) {
+			return db.GetPsychologistByUserRow{ID: uuid.New()}, nil
+		},
+		GetReissuableInvitationFn: func(
+			context.Context,
+			db.GetReissuableInvitationForPatientParams,
+		) (db.GetReissuableInvitationForPatientRow, error) {
+			return db.GetReissuableInvitationForPatientRow{}, pgx.ErrNoRows
+		},
+	}
+
+	_, err := patient.NewService(fake, nil).ReissueInvitation(
+		tenant.WithIdentity(context.Background(), identity), uuid.New(),
+	)
+	assert.ErrorIs(t, err, patient.ErrNotFound)
+}

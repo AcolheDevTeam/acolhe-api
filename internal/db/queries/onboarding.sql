@@ -24,8 +24,22 @@ SET token_digest = @token_digest,
     expires_at = @expires_at,
     updated_at = now()
 WHERE id = @id
-  AND status = 'pending'
+  AND status IN ('pending', 'expired')
 RETURNING id, expires_at;
+
+-- name: GetReissuableInvitationForPatient :one
+SELECT i.id, i.email
+FROM patient_invitation i
+JOIN patient_relationship r ON r.id = i.relationship_id
+JOIN patient_profile p ON p.id = i.patient_id
+WHERE i.patient_id = @patient_id
+  AND p.organization_id = @organization_id
+  AND r.psychologist_id = @psychologist_id
+  AND r.status = 'pending'
+  AND i.status IN ('pending', 'expired')
+ORDER BY i.created_at DESC
+LIMIT 1
+FOR UPDATE OF i;
 
 -- name: GetInvitationByDigest :one
 WITH invitation AS (

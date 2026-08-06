@@ -205,6 +205,39 @@ func (q *Queries) GetInvitationByDigest(ctx context.Context, tokenDigest []byte)
 	return i, err
 }
 
+const getReissuableInvitationForPatient = `-- name: GetReissuableInvitationForPatient :one
+SELECT i.id, i.email
+FROM patient_invitation i
+JOIN patient_relationship r ON r.id = i.relationship_id
+JOIN patient_profile p ON p.id = i.patient_id
+WHERE i.patient_id = $1
+  AND p.organization_id = $2
+  AND r.psychologist_id = $3
+  AND r.status = 'pending'
+  AND i.status IN ('pending', 'expired')
+ORDER BY i.created_at DESC
+LIMIT 1
+FOR UPDATE OF i
+`
+
+type GetReissuableInvitationForPatientParams struct {
+	PatientID      uuid.UUID `json:"patient_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	PsychologistID uuid.UUID `json:"psychologist_id"`
+}
+
+type GetReissuableInvitationForPatientRow struct {
+	ID    uuid.UUID `json:"id"`
+	Email string    `json:"email"`
+}
+
+func (q *Queries) GetReissuableInvitationForPatient(ctx context.Context, arg GetReissuableInvitationForPatientParams) (GetReissuableInvitationForPatientRow, error) {
+	row := q.db.QueryRow(ctx, getReissuableInvitationForPatient, arg.PatientID, arg.OrganizationID, arg.PsychologistID)
+	var i GetReissuableInvitationForPatientRow
+	err := row.Scan(&i.ID, &i.Email)
+	return i, err
+}
+
 const listPublishedConsentDocuments = `-- name: ListPublishedConsentDocuments :many
 SELECT id, scope, version, title, content, content_sha256, required, published_at
 FROM consent_document
@@ -270,7 +303,7 @@ SET token_digest = $1,
     expires_at = $2,
     updated_at = now()
 WHERE id = $3
-  AND status = 'pending'
+  AND status IN ('pending', 'expired')
 RETURNING id, expires_at
 `
 

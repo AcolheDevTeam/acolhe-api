@@ -259,6 +259,48 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (*Patient, error) {
 	return toPatient(r.ID, r.FullName, r.Status, r.RelationshipStatus, r.CreatedAt, nil), nil
 }
 
+// ReissueInvitation replaces the opaque token for a pending patient invitation.
+// Only the psychologist who owns the relationship can issue the replacement;
+// the previous link stops working as soon as the digest is updated.
+func (s *Service) ReissueInvitation(ctx context.Context, patientID uuid.UUID) (*Invitation, error) {
+	identity, ok := tenant.FromContext(ctx)
+	if !ok || identity.Role != "psychologist" {
+		return nil, ErrPsychologistRequired
+	}
+
+	q := tenant.Queries(ctx, s.q)
+	psy, err := q.GetPsychologistByUser(ctx, identity.UserID)
+	if err != nil {
+		return nil, ErrPsychologistRequired
+	}
+	pending, err := q.GetReissuableInvitationForPatient(ctx, db.GetReissuableInvitationForPatientParams{
+		PatientID: patientID, OrganizationID: identity.OrgID, PsychologistID: psy.ID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+
+	token, digest, err := newInvitationToken()
+	if err != nil {
+		return nil, err
+	}
+	expiresAt := time.Now().UTC().Add(7 * 24 * time.Hour)
+	reissued, err := q.ReissuePatientInvitation(ctx, db.ReissuePatientInvitationParams{
+		ID: pending.ID, TokenDigest: digest, ExpiresAt: expiresAt,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+
+	return &Invitation{Token: token, Email: pending.Email, ExpiresAt: reissued.ExpiresAt}, nil
+}
+
 func newInvitationToken() (string, []byte, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {

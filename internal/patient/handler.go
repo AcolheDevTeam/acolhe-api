@@ -21,6 +21,7 @@ func (h *Handler) Register(e *echo.Echo) {
 	g.GET("", h.list)
 	g.POST("", h.create)
 	g.GET("/:id", h.get)
+	g.POST("/:id/invitation", h.reissueInvitation)
 	g.POST("/:id/export", h.requestExport)
 }
 
@@ -70,6 +71,25 @@ func (h *Handler) requestExport(c echo.Context) error {
 		}
 	}
 	return c.NoContent(http.StatusAccepted)
+}
+
+func (h *Handler) reissueInvitation(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "id inválido")
+	}
+	invitation, err := h.svc.ReissueInvitation(c.Request().Context(), id)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			return echo.NewHTTPError(http.StatusNotFound, "convite pendente não encontrado")
+		case errors.Is(err, ErrPsychologistRequired):
+			return echo.NewHTTPError(http.StatusForbidden, err.Error())
+		default:
+			return echo.NewHTTPError(http.StatusInternalServerError, "falha ao gerar novo convite")
+		}
+	}
+	return c.JSON(http.StatusOK, invitation)
 }
 
 func (h *Handler) list(c echo.Context) error {

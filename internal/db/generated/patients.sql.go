@@ -35,9 +35,10 @@ func (q *Queries) CreatePatient(ctx context.Context, arg CreatePatientParams) er
 	return err
 }
 
-const createPatientRelationship = `-- name: CreatePatientRelationship :exec
+const createPatientRelationship = `-- name: CreatePatientRelationship :one
 INSERT INTO patient_relationship (patient_id, psychologist_id, status)
-VALUES ($1, $2, 'active')
+VALUES ($1, $2, 'pending')
+RETURNING id
 `
 
 type CreatePatientRelationshipParams struct {
@@ -45,9 +46,11 @@ type CreatePatientRelationshipParams struct {
 	PsychologistID uuid.UUID `json:"psychologist_id"`
 }
 
-func (q *Queries) CreatePatientRelationship(ctx context.Context, arg CreatePatientRelationshipParams) error {
-	_, err := q.db.Exec(ctx, createPatientRelationship, arg.PatientID, arg.PsychologistID)
-	return err
+func (q *Queries) CreatePatientRelationship(ctx context.Context, arg CreatePatientRelationshipParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createPatientRelationship, arg.PatientID, arg.PsychologistID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getPatient = `-- name: GetPatient :one
@@ -123,13 +126,14 @@ func (q *Queries) GetPatientByUserInOrg(ctx context.Context, arg GetPatientByUse
 }
 
 const getPatientForPsychologist = `-- name: GetPatientForPsychologist :one
-SELECT p.id, p.organization_id, p.full_name, p.birth_date, p.status, p.created_at
+SELECT p.id, p.organization_id, p.full_name, p.birth_date, p.status,
+       r.status AS relationship_status, p.created_at
 FROM patient_profile p
 JOIN patient_relationship r ON r.patient_id = p.id
 WHERE p.id = $1
   AND p.organization_id = $2
   AND r.psychologist_id = $3
-  AND r.status = 'active'
+  AND r.status IN ('pending', 'active', 'paused')
   AND p.status <> 'deleted'
 `
 
@@ -140,12 +144,13 @@ type GetPatientForPsychologistParams struct {
 }
 
 type GetPatientForPsychologistRow struct {
-	ID             uuid.UUID   `json:"id"`
-	OrganizationID uuid.UUID   `json:"organization_id"`
-	FullName       string      `json:"full_name"`
-	BirthDate      pgtype.Date `json:"birth_date"`
-	Status         string      `json:"status"`
-	CreatedAt      time.Time   `json:"created_at"`
+	ID                 uuid.UUID   `json:"id"`
+	OrganizationID     uuid.UUID   `json:"organization_id"`
+	FullName           string      `json:"full_name"`
+	BirthDate          pgtype.Date `json:"birth_date"`
+	Status             string      `json:"status"`
+	RelationshipStatus string      `json:"relationship_status"`
+	CreatedAt          time.Time   `json:"created_at"`
 }
 
 func (q *Queries) GetPatientForPsychologist(ctx context.Context, arg GetPatientForPsychologistParams) (GetPatientForPsychologistRow, error) {
@@ -157,6 +162,7 @@ func (q *Queries) GetPatientForPsychologist(ctx context.Context, arg GetPatientF
 		&i.FullName,
 		&i.BirthDate,
 		&i.Status,
+		&i.RelationshipStatus,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -203,12 +209,12 @@ func (q *Queries) ListPatientsByOrg(ctx context.Context, organizationID uuid.UUI
 }
 
 const listPatientsByPsychologist = `-- name: ListPatientsByPsychologist :many
-SELECT p.id, p.full_name, p.status, p.created_at
+SELECT p.id, p.full_name, p.status, r.status AS relationship_status, p.created_at
 FROM patient_profile p
 JOIN patient_relationship r ON r.patient_id = p.id
 WHERE p.organization_id = $1
   AND r.psychologist_id = $2
-  AND r.status = 'active'
+  AND r.status IN ('pending', 'active', 'paused')
   AND p.status <> 'deleted'
 ORDER BY p.full_name
 `
@@ -219,10 +225,11 @@ type ListPatientsByPsychologistParams struct {
 }
 
 type ListPatientsByPsychologistRow struct {
-	ID        uuid.UUID `json:"id"`
-	FullName  string    `json:"full_name"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+	ID                 uuid.UUID `json:"id"`
+	FullName           string    `json:"full_name"`
+	Status             string    `json:"status"`
+	RelationshipStatus string    `json:"relationship_status"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 func (q *Queries) ListPatientsByPsychologist(ctx context.Context, arg ListPatientsByPsychologistParams) ([]ListPatientsByPsychologistRow, error) {
@@ -238,6 +245,7 @@ func (q *Queries) ListPatientsByPsychologist(ctx context.Context, arg ListPatien
 			&i.ID,
 			&i.FullName,
 			&i.Status,
+			&i.RelationshipStatus,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

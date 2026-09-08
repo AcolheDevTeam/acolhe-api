@@ -84,7 +84,7 @@ JOIN patient_profile p ON p.id = r.patient_id
 WHERE r.patient_id = $1
   AND r.psychologist_id = $2
   AND p.organization_id = $3
-  AND r.status = 'active'
+  AND has_active_clinical_relationship(r.patient_id, r.psychologist_id)
 `
 
 type GetActiveRelationshipParams struct {
@@ -94,11 +94,11 @@ type GetActiveRelationshipParams struct {
 }
 
 type GetActiveRelationshipRow struct {
-	ID             uuid.UUID `json:"id"`
-	PatientID      uuid.UUID `json:"patient_id"`
-	PsychologistID uuid.UUID `json:"psychologist_id"`
-	Status         string    `json:"status"`
-	StartedAt      time.Time `json:"started_at"`
+	ID             uuid.UUID  `json:"id"`
+	PatientID      uuid.UUID  `json:"patient_id"`
+	PsychologistID uuid.UUID  `json:"psychologist_id"`
+	Status         string     `json:"status"`
+	StartedAt      *time.Time `json:"started_at"`
 }
 
 // patient_relationship não tem organization_id; o isolamento de org é feito

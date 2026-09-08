@@ -23,6 +23,7 @@ type Querier interface {
 	CreateCheckin(ctx context.Context, arg CreateCheckinParams) (Checkin, error)
 	CreateClinicalRecord(ctx context.Context, arg CreateClinicalRecordParams) error
 	CreateDocument(ctx context.Context, arg CreateDocumentParams) (CreateDocumentRow, error)
+	CreateLGPDExportRequest(ctx context.Context, arg CreateLGPDExportRequestParams) (LgpdExportRequest, error)
 	CreatePatient(ctx context.Context, arg CreatePatientParams) error
 	CreatePatientInvitation(ctx context.Context, arg CreatePatientInvitationParams) (CreatePatientInvitationRow, error)
 	CreatePatientRelationship(ctx context.Context, arg CreatePatientRelationshipParams) (uuid.UUID, error)
@@ -33,14 +34,19 @@ type Querier interface {
 	GetActiveRelationship(ctx context.Context, arg GetActiveRelationshipParams) (GetActiveRelationshipRow, error)
 	GetActivityReviewMetadata(ctx context.Context, arg GetActivityReviewMetadataParams) (GetActivityReviewMetadataRow, error)
 	GetActivityTemplateInOrg(ctx context.Context, arg GetActivityTemplateInOrgParams) (GetActivityTemplateInOrgRow, error)
+	GetAppointmentForPsychologist(ctx context.Context, arg GetAppointmentForPsychologistParams) (GetAppointmentForPsychologistRow, error)
 	GetAssignmentDetailInOrg(ctx context.Context, arg GetAssignmentDetailInOrgParams) (GetAssignmentDetailInOrgRow, error)
 	// Confirma que o assignment existe e pertence à organização (via paciente).
 	GetAssignmentInOrg(ctx context.Context, arg GetAssignmentInOrgParams) (GetAssignmentInOrgRow, error)
 	GetInvitationByCreationKey(ctx context.Context, arg GetInvitationByCreationKeyParams) (GetInvitationByCreationKeyRow, error)
 	GetInvitationByDigest(ctx context.Context, tokenDigest []byte) (GetInvitationByDigestRow, error)
+	GetLGPDExportRequest(ctx context.Context, arg GetLGPDExportRequestParams) (LgpdExportRequest, error)
+	GetLGPDExportSLAMetric(ctx context.Context, organizationID uuid.UUID) (LgpdExportSlaMetric, error)
 	GetPatient(ctx context.Context, arg GetPatientParams) (GetPatientRow, error)
 	GetPatientByUserInOrg(ctx context.Context, arg GetPatientByUserInOrgParams) (GetPatientByUserInOrgRow, error)
+	GetPatientExportAccess(ctx context.Context, arg GetPatientExportAccessParams) (GetPatientExportAccessRow, error)
 	GetPatientForPsychologist(ctx context.Context, arg GetPatientForPsychologistParams) (GetPatientForPsychologistRow, error)
+	GetPatientLGPDExportData(ctx context.Context, arg GetPatientLGPDExportDataParams) (GetPatientLGPDExportDataRow, error)
 	// Timeline unificada do paciente: sessões + agendamentos + atividades.
 	// Isolamento multi-tenant via patient_profile.organization_id em cada ramo do UNION.
 	GetPatientTimeline(ctx context.Context, arg GetPatientTimelineParams) ([]GetPatientTimelineRow, error)
@@ -67,11 +73,17 @@ type Querier interface {
 	LockPatientCreationKey(ctx context.Context, idempotencyKey string) (interface{}, error)
 	MarkAssignmentSubmitted(ctx context.Context, id uuid.UUID) error
 	MarkCompleteAssignmentReviewed(ctx context.Context, arg MarkCompleteAssignmentReviewedParams) (int64, error)
+	MarkLGPDExportCompleted(ctx context.Context, arg MarkLGPDExportCompletedParams) (int64, error)
+	MarkLGPDExportFailed(ctx context.Context, arg MarkLGPDExportFailedParams) (int64, error)
+	MarkLGPDExportProcessing(ctx context.Context, arg MarkLGPDExportProcessingParams) (int64, error)
+	MarkLGPDExportQueueFailed(ctx context.Context, arg MarkLGPDExportQueueFailedParams) (int64, error)
+	MarkLGPDExportStored(ctx context.Context, arg MarkLGPDExportStoredParams) (int64, error)
 	// Confirma que o paciente pertence à organização (usado antes de criar check-in).
 	PatientInOrg(ctx context.Context, arg PatientInOrgParams) (bool, error)
 	ReissuePatientInvitation(ctx context.Context, arg ReissuePatientInvitationParams) (ReissuePatientInvitationRow, error)
 	// Cria (submete) a resposta de uma atividade e marca o assignment como submitted.
 	SubmitResponse(ctx context.Context, arg SubmitResponseParams) (SubmitResponseRow, error)
+	UpdateAppointmentStatus(ctx context.Context, arg UpdateAppointmentStatusParams) (UpdateAppointmentStatusRow, error)
 	WriteAuditLog(ctx context.Context, arg WriteAuditLogParams) error
 }
 

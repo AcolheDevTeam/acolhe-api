@@ -22,7 +22,6 @@ type ActivityAssignment struct {
 	Status             string     `json:"status"`
 	ScheduledFor       *time.Time `json:"scheduled_for"`
 	DueAt              *time.Time `json:"due_at"`
-	ReviewedAt         *time.Time `json:"reviewed_at"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
 }

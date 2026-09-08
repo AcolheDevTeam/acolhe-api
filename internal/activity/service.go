@@ -442,6 +442,28 @@ func reviewField(row db.ListActivityReviewValuesRow) (ReviewField, error) {
 	if len(config) == 0 {
 		config = json.RawMessage(`{}`)
 	}
+	typedValues := 0
+	if row.ValueText != nil {
+		typedValues++
+	}
+	if row.ValueNumber.Valid {
+		typedValues++
+	}
+	if row.ValueBoolean != nil {
+		typedValues++
+	}
+	if row.ValueDatetime != nil {
+		typedValues++
+	}
+	if len(row.ValueJson) > 0 {
+		typedValues++
+	}
+	if row.AttachmentID != nil {
+		typedValues++
+	}
+	if typedValues != 1 {
+		return ReviewField{}, ErrInvalidResponse
+	}
 	field := ReviewField{
 		FieldID: row.FieldID, Code: row.FieldCode, Label: row.Label,
 		FieldType: row.FieldType, DisplayOrder: row.DisplayOrder, Config: config,

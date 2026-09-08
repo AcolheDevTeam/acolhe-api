@@ -181,3 +181,20 @@ func TestMarkReviewedIsCompleteAndIdempotent(t *testing.T) {
 	assert.Equal(t, "reviewed", second.State)
 	assert.Equal(t, 1, updates)
 }
+
+func TestReviewFieldRejectsMultipleTypedValues(t *testing.T) {
+	textValue := "resposta"
+	booleanValue := true
+
+	_, err := reviewField(db.ListActivityReviewValuesRow{
+		FieldID:      uuid.New(),
+		FieldCode:    "field",
+		Label:        "Campo",
+		FieldType:    "text",
+		Config:       []byte(`{}`),
+		ValueText:    &textValue,
+		ValueBoolean: &booleanValue,
+	})
+
+	require.ErrorIs(t, err, ErrInvalidResponse)
+}

@@ -90,6 +90,80 @@ func (q *Queries) CreateAssignment(ctx context.Context, arg CreateAssignmentPara
 	return i, err
 }
 
+const getActivityReviewMetadata = `-- name: GetActivityReviewMetadata :one
+SELECT ag.id, ag.template_id, ag.template_version, ag.patient_id,
+       p.full_name AS patient_name, ag.assigner_id, ag.status,
+       ag.due_at, ag.created_at, ag.reviewed_at,
+       t.title, ty.code AS type,
+       CAST(COALESCE(response.id::text, '') AS text) AS response_id, response.submitted_at,
+       activity_submission_is_complete(ag.id) AS submission_complete,
+       (SELECT count(*)::integer FROM activity_field field
+        WHERE field.template_id = ag.template_id) AS field_count
+FROM activity_assignment ag
+JOIN patient_profile p ON p.id = ag.patient_id
+JOIN activity_template t ON t.id = ag.template_id
+JOIN activity_type ty ON ty.id = t.type_id
+LEFT JOIN LATERAL (
+  SELECT r.id, r.submitted_at
+  FROM activity_response r
+  WHERE r.assignment_id = ag.id AND NOT r.is_draft
+  ORDER BY r.submitted_at DESC NULLS LAST, r.created_at DESC
+  LIMIT 1
+) response ON true
+WHERE ag.id = $1
+  AND p.organization_id = $2
+  AND ag.assigner_id = $3
+`
+
+type GetActivityReviewMetadataParams struct {
+	ID             uuid.UUID `json:"id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	AssignerID     uuid.UUID `json:"assigner_id"`
+}
+
+type GetActivityReviewMetadataRow struct {
+	ID                 uuid.UUID  `json:"id"`
+	TemplateID         uuid.UUID  `json:"template_id"`
+	TemplateVersion    int32      `json:"template_version"`
+	PatientID          uuid.UUID  `json:"patient_id"`
+	PatientName        string     `json:"patient_name"`
+	AssignerID         uuid.UUID  `json:"assigner_id"`
+	Status             string     `json:"status"`
+	DueAt              *time.Time `json:"due_at"`
+	CreatedAt          time.Time  `json:"created_at"`
+	ReviewedAt         *time.Time `json:"reviewed_at"`
+	Title              string     `json:"title"`
+	Type               string     `json:"type"`
+	ResponseID         string     `json:"response_id"`
+	SubmittedAt        *time.Time `json:"submitted_at"`
+	SubmissionComplete bool       `json:"submission_complete"`
+	FieldCount         int32      `json:"field_count"`
+}
+
+func (q *Queries) GetActivityReviewMetadata(ctx context.Context, arg GetActivityReviewMetadataParams) (GetActivityReviewMetadataRow, error) {
+	row := q.db.QueryRow(ctx, getActivityReviewMetadata, arg.ID, arg.OrganizationID, arg.AssignerID)
+	var i GetActivityReviewMetadataRow
+	err := row.Scan(
+		&i.ID,
+		&i.TemplateID,
+		&i.TemplateVersion,
+		&i.PatientID,
+		&i.PatientName,
+		&i.AssignerID,
+		&i.Status,
+		&i.DueAt,
+		&i.CreatedAt,
+		&i.ReviewedAt,
+		&i.Title,
+		&i.Type,
+		&i.ResponseID,
+		&i.SubmittedAt,
+		&i.SubmissionComplete,
+		&i.FieldCount,
+	)
+	return i, err
+}
+
 const getActivityTemplateInOrg = `-- name: GetActivityTemplateInOrg :one
 SELECT t.id, t.title, ty.code AS type, t.version
 FROM activity_template t
@@ -210,6 +284,90 @@ func (q *Queries) GetAssignmentInOrg(ctx context.Context, arg GetAssignmentInOrg
 		&i.Status,
 	)
 	return i, err
+}
+
+const listActivityReviewValues = `-- name: ListActivityReviewValues :many
+SELECT field.id AS field_id, field.code AS field_code, field.label,
+       field.field_type, field.config, field.display_order,
+       value.value_text, value.value_number, value.value_boolean,
+       value.value_datetime, value.value_json, value.attachment_id,
+       attachment.mime_type, attachment.size_bytes
+FROM activity_assignment assignment
+JOIN patient_profile patient ON patient.id = assignment.patient_id
+JOIN activity_response response ON response.assignment_id = assignment.id
+  AND response.id = $1
+  AND NOT response.is_draft
+JOIN activity_response_value value ON value.response_id = response.id
+JOIN activity_field field ON field.id = value.field_id
+LEFT JOIN attachment ON attachment.id = value.attachment_id
+WHERE assignment.id = $2
+  AND patient.organization_id = $3
+  AND assignment.assigner_id = $4
+ORDER BY field.display_order, field.id
+`
+
+type ListActivityReviewValuesParams struct {
+	ResponseID     uuid.UUID `json:"response_id"`
+	AssignmentID   uuid.UUID `json:"assignment_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	AssignerID     uuid.UUID `json:"assigner_id"`
+}
+
+type ListActivityReviewValuesRow struct {
+	FieldID       uuid.UUID      `json:"field_id"`
+	FieldCode     string         `json:"field_code"`
+	Label         string         `json:"label"`
+	FieldType     string         `json:"field_type"`
+	Config        []byte         `json:"config"`
+	DisplayOrder  int32          `json:"display_order"`
+	ValueText     *string        `json:"value_text"`
+	ValueNumber   pgtype.Numeric `json:"value_number"`
+	ValueBoolean  *bool          `json:"value_boolean"`
+	ValueDatetime *time.Time     `json:"value_datetime"`
+	ValueJson     []byte         `json:"value_json"`
+	AttachmentID  *uuid.UUID     `json:"attachment_id"`
+	MimeType      *string        `json:"mime_type"`
+	SizeBytes     *int32         `json:"size_bytes"`
+}
+
+func (q *Queries) ListActivityReviewValues(ctx context.Context, arg ListActivityReviewValuesParams) ([]ListActivityReviewValuesRow, error) {
+	rows, err := q.db.Query(ctx, listActivityReviewValues,
+		arg.ResponseID,
+		arg.AssignmentID,
+		arg.OrganizationID,
+		arg.AssignerID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActivityReviewValuesRow
+	for rows.Next() {
+		var i ListActivityReviewValuesRow
+		if err := rows.Scan(
+			&i.FieldID,
+			&i.FieldCode,
+			&i.Label,
+			&i.FieldType,
+			&i.Config,
+			&i.DisplayOrder,
+			&i.ValueText,
+			&i.ValueNumber,
+			&i.ValueBoolean,
+			&i.ValueDatetime,
+			&i.ValueJson,
+			&i.AttachmentID,
+			&i.MimeType,
+			&i.SizeBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listActivityTemplates = `-- name: ListActivityTemplates :many
@@ -441,31 +599,6 @@ func (q *Queries) ListResponsesByAssignment(ctx context.Context, assignmentID uu
 	return items, nil
 }
 
-const markAssignmentReviewed = `-- name: MarkAssignmentReviewed :execrows
-UPDATE activity_assignment ag
-SET status = 'reviewed', updated_at = now()
-FROM patient_profile p
-WHERE ag.id = $1
-  AND p.id = ag.patient_id
-  AND p.organization_id = $2
-  AND ag.assigner_id = $3
-  AND ag.status = 'submitted'
-`
-
-type MarkAssignmentReviewedParams struct {
-	ID             uuid.UUID `json:"id"`
-	OrganizationID uuid.UUID `json:"organization_id"`
-	AssignerID     uuid.UUID `json:"assigner_id"`
-}
-
-func (q *Queries) MarkAssignmentReviewed(ctx context.Context, arg MarkAssignmentReviewedParams) (int64, error) {
-	result, err := q.db.Exec(ctx, markAssignmentReviewed, arg.ID, arg.OrganizationID, arg.AssignerID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const markAssignmentSubmitted = `-- name: MarkAssignmentSubmitted :exec
 UPDATE activity_assignment SET status = 'submitted', updated_at = now()
 WHERE id = $1
@@ -474,6 +607,34 @@ WHERE id = $1
 func (q *Queries) MarkAssignmentSubmitted(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, markAssignmentSubmitted, id)
 	return err
+}
+
+const markCompleteAssignmentReviewed = `-- name: MarkCompleteAssignmentReviewed :execrows
+UPDATE activity_assignment ag
+SET status = 'reviewed',
+    reviewed_at = COALESCE(reviewed_at, now()),
+    updated_at = now()
+FROM patient_profile p
+WHERE ag.id = $1
+  AND p.id = ag.patient_id
+  AND p.organization_id = $2
+  AND ag.assigner_id = $3
+  AND ag.status = 'submitted'
+  AND activity_submission_is_complete(ag.id)
+`
+
+type MarkCompleteAssignmentReviewedParams struct {
+	ID             uuid.UUID `json:"id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	AssignerID     uuid.UUID `json:"assigner_id"`
+}
+
+func (q *Queries) MarkCompleteAssignmentReviewed(ctx context.Context, arg MarkCompleteAssignmentReviewedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markCompleteAssignmentReviewed, arg.ID, arg.OrganizationID, arg.AssignerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const submitResponse = `-- name: SubmitResponse :one

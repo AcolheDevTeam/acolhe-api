@@ -1,5 +1,15 @@
 # syntax=docker/dockerfile:1
 
+# ---------- desenvolvimento com hot reload ----------
+FROM golang:1.25-alpine AS development
+WORKDIR /app
+RUN apk add --no-cache git \
+ && go install github.com/air-verse/air@v1.63.0
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+CMD ["air", "-c", ".air.toml"]
+
 # ---------- build dos binários (api + worker) ----------
 FROM golang:1.25-alpine AS build
 WORKDIR /src

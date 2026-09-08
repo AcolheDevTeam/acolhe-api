@@ -26,10 +26,14 @@ func (h *Handler) reminder(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	if err := h.svc.EnqueueReminder(c.Request().Context(), req); err != nil {
-		if errors.Is(err, ErrQueueUnavailable) {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrQueueUnavailable):
 			return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+		default:
+			return echo.NewHTTPError(http.StatusInternalServerError, "falha ao enfileirar lembrete")
 		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "falha ao enfileirar lembrete")
 	}
 	return c.NoContent(http.StatusAccepted)
 }

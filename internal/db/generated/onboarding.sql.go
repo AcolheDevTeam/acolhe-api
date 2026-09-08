@@ -157,16 +157,21 @@ func (q *Queries) GetInvitationByCreationKey(ctx context.Context, arg GetInvitat
 }
 
 const getInvitationByDigest = `-- name: GetInvitationByDigest :one
-SELECT i.id, i.patient_id, i.relationship_id, i.email, i.status, i.expires_at,
-       p.full_name AS patient_name,
-       psy.full_name AS psychologist_name,
-       psy.crp_number,
-       psy.crp_state
-FROM patient_invitation i
-JOIN patient_profile p ON p.id = i.patient_id
-JOIN patient_relationship r ON r.id = i.relationship_id
-JOIN psychologist_profile psy ON psy.id = r.psychologist_id
-WHERE i.token_digest = $1
+WITH invitation AS (
+  SELECT get_patient_invitation($1) AS result
+)
+SELECT (result->>'id')::uuid AS id,
+       (result->>'patientId')::uuid AS patient_id,
+       (result->>'relationshipId')::uuid AS relationship_id,
+       (result->>'email')::text AS email,
+       (result->>'status')::text AS status,
+       (result->>'expiresAt')::timestamptz AS expires_at,
+       (result->>'patientName')::text AS patient_name,
+       (result->>'psychologistName')::text AS psychologist_name,
+       (result->>'crpNumber')::text AS crp_number,
+       (result->>'crpState')::text AS crp_state
+FROM invitation
+WHERE result IS NOT NULL
 `
 
 type GetInvitationByDigestRow struct {
@@ -197,6 +202,39 @@ func (q *Queries) GetInvitationByDigest(ctx context.Context, tokenDigest []byte)
 		&i.CrpNumber,
 		&i.CrpState,
 	)
+	return i, err
+}
+
+const getReissuableInvitationForPatient = `-- name: GetReissuableInvitationForPatient :one
+SELECT i.id, i.email
+FROM patient_invitation i
+JOIN patient_relationship r ON r.id = i.relationship_id
+JOIN patient_profile p ON p.id = i.patient_id
+WHERE i.patient_id = $1
+  AND p.organization_id = $2
+  AND r.psychologist_id = $3
+  AND r.status = 'pending'
+  AND i.status IN ('pending', 'expired')
+ORDER BY i.created_at DESC
+LIMIT 1
+FOR UPDATE OF i
+`
+
+type GetReissuableInvitationForPatientParams struct {
+	PatientID      uuid.UUID `json:"patient_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	PsychologistID uuid.UUID `json:"psychologist_id"`
+}
+
+type GetReissuableInvitationForPatientRow struct {
+	ID    uuid.UUID `json:"id"`
+	Email string    `json:"email"`
+}
+
+func (q *Queries) GetReissuableInvitationForPatient(ctx context.Context, arg GetReissuableInvitationForPatientParams) (GetReissuableInvitationForPatientRow, error) {
+	row := q.db.QueryRow(ctx, getReissuableInvitationForPatient, arg.PatientID, arg.OrganizationID, arg.PsychologistID)
+	var i GetReissuableInvitationForPatientRow
+	err := row.Scan(&i.ID, &i.Email)
 	return i, err
 }
 
@@ -265,7 +303,7 @@ SET token_digest = $1,
     expires_at = $2,
     updated_at = now()
 WHERE id = $3
-  AND status = 'pending'
+  AND status IN ('pending', 'expired')
 RETURNING id, expires_at
 `
 

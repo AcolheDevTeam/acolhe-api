@@ -18,6 +18,7 @@ import (
 	"github.com/joycesilva/acolhe-api/internal/checkin"
 	db "github.com/joycesilva/acolhe-api/internal/db/generated"
 	"github.com/joycesilva/acolhe-api/internal/document"
+	"github.com/joycesilva/acolhe-api/internal/mailer"
 	"github.com/joycesilva/acolhe-api/internal/middleware"
 	"github.com/joycesilva/acolhe-api/internal/notification"
 	"github.com/joycesilva/acolhe-api/internal/onboarding"
@@ -34,7 +35,25 @@ type App struct {
 //
 // pool pode ser nil (testes unitários com FakeQuerier): nesse caso o middleware
 // TenantTx vira no-op e os services usam o querier injetado direto.
-func New(pool *pgxpool.Pool, q db.Querier, queue *asynq.Client, jwtSecret string) *App {
+// Option ajusta integrações opcionais da aplicação (ex.: e-mail de convite).
+type Option func(*options)
+
+type options struct {
+	patient []patient.Option
+}
+
+// WithInvitationMailer liga o envio de convites de pacientes por e-mail.
+func WithInvitationMailer(m mailer.Mailer, frontendURL string) Option {
+	return func(o *options) {
+		o.patient = append(o.patient, patient.WithInvitationMailer(m, frontendURL))
+	}
+}
+
+func New(pool *pgxpool.Pool, q db.Querier, queue *asynq.Client, jwtSecret string, opts ...Option) *App {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
 	e := echo.New()
 	e.HideBanner = true
 
@@ -67,7 +86,7 @@ func New(pool *pgxpool.Pool, q db.Querier, queue *asynq.Client, jwtSecret string
 	// Domínios (mesmo padrão handler+service para todos).
 	account.NewHandler(account.NewService(q, jwtSecret)).Register(e)
 	onboarding.NewHandler(onboarding.NewService(q)).Register(e)
-	patient.NewHandler(patient.NewService(q, queue)).Register(e)
+	patient.NewHandler(patient.NewService(q, queue, o.patient...)).Register(e)
 	session.NewHandler(session.NewService(q)).Register(e)
 	appointment.NewHandler(appointment.NewService(q)).Register(e)
 	activity.NewHandler(activity.NewService(q)).Register(e)

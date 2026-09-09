@@ -19,6 +19,7 @@ var publicPaths = map[string]bool{
 	"/onboarding/invitations/:token":         true,
 	"/onboarding/invitations/:token/accept":  true,
 	"/onboarding/invitations/:token/decline": true,
+	"/signup":                                true,
 }
 
 // claimsContextKey guarda as claims cruas para o middleware de tenant consumir.

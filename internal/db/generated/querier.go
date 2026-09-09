@@ -25,6 +25,7 @@ type Querier interface {
 	CreateDocument(ctx context.Context, arg CreateDocumentParams) (CreateDocumentRow, error)
 	CreateLGPDExportRequest(ctx context.Context, arg CreateLGPDExportRequestParams) (LgpdExportRequest, error)
 	CreatePatient(ctx context.Context, arg CreatePatientParams) error
+	CreatePatientCheckin(ctx context.Context, arg CreatePatientCheckinParams) (Checkin, error)
 	CreatePatientInvitation(ctx context.Context, arg CreatePatientInvitationParams) (CreatePatientInvitationRow, error)
 	CreatePatientRelationship(ctx context.Context, arg CreatePatientRelationshipParams) (uuid.UUID, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (CreateSessionRow, error)
@@ -47,6 +48,11 @@ type Querier interface {
 	GetPatientExportAccess(ctx context.Context, arg GetPatientExportAccessParams) (GetPatientExportAccessRow, error)
 	GetPatientForPsychologist(ctx context.Context, arg GetPatientForPsychologistParams) (GetPatientForPsychologistRow, error)
 	GetPatientLGPDExportData(ctx context.Context, arg GetPatientLGPDExportDataParams) (GetPatientLGPDExportDataRow, error)
+	GetPatientNextAppointment(ctx context.Context, userID *uuid.UUID) (GetPatientNextAppointmentRow, error)
+	// All patient portal queries identify the patient from the authenticated user.
+	// No client-provided patient_id is accepted by this contract.
+	GetPatientPortalContext(ctx context.Context, userID *uuid.UUID) (GetPatientPortalContextRow, error)
+	GetPatientProcessSummary(ctx context.Context, userID *uuid.UUID) (GetPatientProcessSummaryRow, error)
 	// Timeline unificada do paciente: sessões + agendamentos + atividades.
 	// Isolamento multi-tenant via patient_profile.organization_id em cada ramo do UNION.
 	GetPatientTimeline(ctx context.Context, arg GetPatientTimelineParams) ([]GetPatientTimelineRow, error)
@@ -67,6 +73,8 @@ type Querier interface {
 	ListAssignmentsByPsychologist(ctx context.Context, arg ListAssignmentsByPsychologistParams) ([]ListAssignmentsByPsychologistRow, error)
 	ListCheckinsByPatient(ctx context.Context, arg ListCheckinsByPatientParams) ([]Checkin, error)
 	ListDocumentsByPatient(ctx context.Context, arg ListDocumentsByPatientParams) ([]ListDocumentsByPatientRow, error)
+	ListPatientCheckins(ctx context.Context, userID *uuid.UUID) ([]ListPatientCheckinsRow, error)
+	ListPatientPendingActivities(ctx context.Context, userID *uuid.UUID) ([]ListPatientPendingActivitiesRow, error)
 	ListPatientsByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListPatientsByOrgRow, error)
 	ListPatientsByPsychologist(ctx context.Context, arg ListPatientsByPsychologistParams) ([]ListPatientsByPsychologistRow, error)
 	ListPublishedConsentDocuments(ctx context.Context) ([]ListPublishedConsentDocumentsRow, error)

@@ -95,6 +95,9 @@ func TestMeUsesOnlyAuthenticatedUserID(t *testing.T) {
 				Email: "patient@example.test", Role: "patient",
 			}, nil
 		},
+		GetPatientPortalContextFn: func(_ context.Context, id *uuid.UUID) (db.GetPatientPortalContextRow, error) {
+			return db.GetPatientPortalContextRow{ID: *id, FullName: "Paciente", RelationshipStatus: "active", Consented: true}, nil
+		},
 	}
 	user, err := account.NewService(fake, "secret").Me(
 		tenant.WithIdentity(context.Background(), identity),

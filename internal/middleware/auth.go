@@ -14,8 +14,11 @@ import (
 
 // publicPaths não exigem JWT (login emite o token; health é probe de liveness).
 var publicPaths = map[string]bool{
-	"/health": true,
-	"/login":  true,
+	"/health":                                true,
+	"/login":                                 true,
+	"/onboarding/invitations/:token":         true,
+	"/onboarding/invitations/:token/accept":  true,
+	"/onboarding/invitations/:token/decline": true,
 }
 
 func isPublicPath(path string) bool {

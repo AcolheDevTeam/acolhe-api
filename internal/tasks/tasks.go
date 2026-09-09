@@ -22,8 +22,12 @@ const (
 // --- payloads ---
 
 type LGPDExportPayload struct {
-	PatientID   uuid.UUID `json:"patientId"`
-	RequestedBy uuid.UUID `json:"requestedBy"`
+	RequestID      uuid.UUID `json:"requestId"`
+	PatientID      uuid.UUID `json:"patientId"`
+	OrganizationID uuid.UUID `json:"organizationId"`
+	RequestedBy    uuid.UUID `json:"requestedBy"`
+	RequesterRole  string    `json:"requesterRole"`
+	RequestedAt    time.Time `json:"requestedAt"`
 }
 
 type ReminderPayload struct {
@@ -40,13 +44,28 @@ type PDFPayload struct {
 
 // --- construtores (usados pelos produtores) ---
 
-// NewLGPDExportTask agenda a exportação LGPD com retenção de 24h (SLA do PRD).
+// NewLGPDExportTask carries the original request timestamp and an absolute
+// deadline. A 24-hour Timeout would only limit execution time and would not
+// detect queue delay, so the SLA is represented with asynq.Deadline instead.
 func NewLGPDExportTask(p LGPDExportPayload) (*asynq.Task, error) {
+	if p.RequestID == uuid.Nil {
+		p.RequestID = uuid.New()
+	}
+	if p.RequestedAt.IsZero() {
+		p.RequestedAt = time.Now().UTC()
+	}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil, err
 	}
-	return asynq.NewTask(TypeLGPDExport, b, asynq.MaxRetry(5), asynq.Timeout(24*time.Hour)), nil
+	return asynq.NewTask(
+		TypeLGPDExport,
+		b,
+		asynq.MaxRetry(5),
+		asynq.Timeout(30*time.Minute),
+		asynq.Deadline(p.RequestedAt.Add(24*time.Hour)),
+		asynq.TaskID(p.RequestID.String()),
+	), nil
 }
 
 // NewReminderTask agenda um lembrete; opcionalmente para um instante futuro.

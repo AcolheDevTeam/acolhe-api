@@ -1,4 +1,4 @@
-.PHONY: run build tidy dev generate migrate apply lint dev-schema seed db-up golangci sec trivy semgrep check
+.PHONY: run build tidy dev generate migrate apply lint dev-schema seed golangci sec trivy semgrep check
 
 # ---------- App ----------
 
@@ -14,9 +14,9 @@ tidy:
 seed:
 	go run ./cmd/seed
 
-# Hot reload em .go e .sql (ver .air.toml). Requer `air` instalado.
+# Sobe API, Postgres e Redis; migrations e seed rodam automaticamente.
 dev:
-	air
+	docker compose up
 
 # ---------- Dados: sqlc + Atlas (schema.sql é a fonte da verdade) ----------
 
@@ -47,12 +47,6 @@ lint:
 
 # Fluxo normal de desenvolvimento: gera migration + regenera tipos Go.
 dev-schema: migrate generate
-
-# ---------- Infra local ----------
-
-# Sobe Postgres + Redis (ver docker-compose.yml).
-db-up:
-	docker compose up -d
 
 # ---------- Qualidade / análise estática (ver .github/workflows/ci.yml) ----------
 

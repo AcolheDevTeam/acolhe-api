@@ -8,23 +8,17 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-type Handler struct {
-	svc *Service
-}
+type Handler struct{ svc *Service }
 
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
-}
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 func (h *Handler) Register(e *echo.Echo) {
 	g := e.Group("/patients")
 	g.GET("", h.list)
+	g.POST("", h.create)
 	g.GET("/:id", h.get)
+	g.POST("/:id/invitation", h.reissueInvitation)
 	g.POST("/:id/export", h.requestExport)
-	g.POST("/:id/invitations", h.createInvitation)
-
-	invites := e.Group("/invitations")
-	invites.POST("/:token/accept", h.acceptInvitation)
 
 	portal := e.Group("/patient")
 	portal.GET("/context", h.portalContext)
@@ -33,40 +27,6 @@ func (h *Handler) Register(e *echo.Echo) {
 	portal.GET("/check-ins", h.checkins)
 	portal.POST("/check-ins", h.createPatientCheckin)
 	portal.GET("/process-summary", h.processSummary)
-}
-
-func (h *Handler) createInvitation(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "id inválido")
-	}
-	var req InvitationRequest
-	if err := c.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "corpo inválido")
-	}
-	result, err := h.svc.CreateInvitation(c.Request().Context(), id, req)
-	if err != nil {
-		if errors.Is(err, ErrPatientOnly) {
-			return echo.NewHTTPError(http.StatusForbidden, "acesso não permitido")
-		}
-		if errors.Is(err, ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "paciente não encontrado")
-		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "não foi possível criar o convite")
-	}
-	return c.JSON(http.StatusCreated, result)
-}
-
-func (h *Handler) acceptInvitation(c echo.Context) error {
-	var req AcceptInvitationRequest
-	if err := c.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "corpo inválido")
-	}
-	result, err := h.svc.AcceptInvitation(c.Request().Context(), c.Param("token"), req)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "convite inválido ou expirado")
-	}
-	return c.JSON(http.StatusCreated, result)
 }
 
 func (h *Handler) portalContext(c echo.Context) error {
@@ -124,6 +84,34 @@ func (h *Handler) processSummary(c echo.Context) error {
 	return c.JSON(http.StatusOK, result)
 }
 
+func (h *Handler) create(c echo.Context) error {
+	var req CreateRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "corpo inválido")
+	}
+	if key := c.Request().Header.Get("Idempotency-Key"); key != "" {
+		parsed, err := uuid.Parse(key)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "Idempotency-Key inválida")
+		}
+		req.IdempotencyKey = parsed
+	} else {
+		req.IdempotencyKey = uuid.New()
+	}
+	p, err := h.svc.Create(c.Request().Context(), req)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrPsychologistRequired):
+			return echo.NewHTTPError(http.StatusForbidden, err.Error())
+		default:
+			return echo.NewHTTPError(http.StatusInternalServerError, "falha ao criar paciente")
+		}
+	}
+	return c.JSON(http.StatusCreated, p)
+}
+
 func (h *Handler) requestExport(c echo.Context) error {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -135,6 +123,8 @@ func (h *Handler) requestExport(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrQueueUnavailable):
 			return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+		case errors.Is(err, ErrPsychologistRequired):
+			return echo.NewHTTPError(http.StatusForbidden, err.Error())
 		default:
 			return echo.NewHTTPError(http.StatusInternalServerError, "falha ao solicitar exportação")
 		}
@@ -142,9 +132,31 @@ func (h *Handler) requestExport(c echo.Context) error {
 	return c.NoContent(http.StatusAccepted)
 }
 
+func (h *Handler) reissueInvitation(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "id inválido")
+	}
+	invitation, err := h.svc.ReissueInvitation(c.Request().Context(), id)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			return echo.NewHTTPError(http.StatusNotFound, "convite pendente não encontrado")
+		case errors.Is(err, ErrPsychologistRequired):
+			return echo.NewHTTPError(http.StatusForbidden, err.Error())
+		default:
+			return echo.NewHTTPError(http.StatusInternalServerError, "falha ao gerar novo convite")
+		}
+	}
+	return c.JSON(http.StatusOK, invitation)
+}
+
 func (h *Handler) list(c echo.Context) error {
 	patients, err := h.svc.List(c.Request().Context())
 	if err != nil {
+		if errors.Is(err, ErrPsychologistRequired) {
+			return echo.NewHTTPError(http.StatusForbidden, err.Error())
+		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "erro ao listar pacientes")
 	}
 	return c.JSON(http.StatusOK, patients)
@@ -157,6 +169,9 @@ func (h *Handler) get(c echo.Context) error {
 	}
 	p, err := h.svc.Get(c.Request().Context(), id)
 	if err != nil {
+		if errors.Is(err, ErrPsychologistRequired) {
+			return echo.NewHTTPError(http.StatusForbidden, err.Error())
+		}
 		return echo.NewHTTPError(http.StatusNotFound, err.Error())
 	}
 	return c.JSON(http.StatusOK, p)

@@ -1,42 +1,54 @@
 //go:build integration
 
-// Round-trip real no Redis (asynq): enfileira uma tarefa e confirma via Inspector.
+// Round-trip real no Redis (asynq): enfileira, reinicia o Redis com AOF e
+// processa a tarefa pelo handler real do worker.
 //
 //	go test -tags=integration ./internal/worker/...
-//
-// Requer Redis acessível (docker compose up / colima). Usa REDIS_ADDR ou o default.
 package worker_test
 
 import (
 	"context"
-	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/joycesilva/acolhe-api/internal/tasks"
+	"github.com/joycesilva/acolhe-api/internal/testsupport"
+	"github.com/joycesilva/acolhe-api/internal/worker"
 )
 
-func redisAddr() string {
-	if a := os.Getenv("REDIS_ADDR"); a != "" {
-		return a
-	}
-	return "127.0.0.1:6379"
-}
+func TestQueueSurvivesRedisRestartAndProcessesTask(t *testing.T) {
+	ctx := context.Background()
+	redis, err := testcontainers.Run(
+		ctx,
+		"redis:7-alpine",
+		testcontainers.WithExposedPorts("6379/tcp"),
+		testcontainers.WithCmd(
+			"redis-server",
+			"--save", "",
+			"--appendonly", "yes",
+			"--appendfsync", "always",
+		),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("Ready to accept connections").WithStartupTimeout(30*time.Second),
+		),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = testcontainers.TerminateContainer(redis) })
 
-func TestEnqueueReminder_RoundTrip(t *testing.T) {
-	opt := asynq.RedisClientOpt{Addr: redisAddr()}
-
-	insp := asynq.NewInspector(opt)
-	defer insp.Close()
-	// Estado limpo antes do teste.
-	_, _ = insp.DeleteAllPendingTasks("default")
+	host, err := redis.Host(ctx)
+	require.NoError(t, err)
+	port, err := redis.MappedPort(ctx, "6379/tcp")
+	require.NoError(t, err)
+	opt := asynq.RedisClientOpt{Addr: host + ":" + port.Port()}
 
 	client := asynq.NewClient(opt)
-	defer client.Close()
 
 	task, err := tasks.NewPDFTask(tasks.PDFPayload{
 		DocumentID: uuid.New(), PatientID: uuid.New(), PsychologistID: uuid.New(),
@@ -47,18 +59,49 @@ func TestEnqueueReminder_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, tasks.TypePDF, info.Type)
 
-	pending, err := insp.ListPendingTasks("default")
+	inspector := asynq.NewInspector(opt)
+	pending, err := inspector.ListPendingTasks("default")
 	require.NoError(t, err)
 	require.NotEmpty(t, pending, "a tarefa deve estar pendente no Redis")
+	require.NoError(t, inspector.Close())
+	require.NoError(t, client.Close())
 
-	found := false
-	for _, ti := range pending {
-		if ti.Type == tasks.TypePDF {
-			found = true
+	require.NoError(t, redis.Stop(ctx, nil))
+	require.NoError(t, redis.Start(ctx))
+
+	host, err = redis.Host(ctx)
+	require.NoError(t, err)
+	port, err = redis.MappedPort(ctx, "6379/tcp")
+	require.NoError(t, err)
+	opt = asynq.RedisClientOpt{Addr: host + ":" + port.Port()}
+
+	require.Eventually(t, func() bool {
+		restartedInspector := asynq.NewInspector(opt)
+		defer restartedInspector.Close()
+		afterRestart, inspectErr := restartedInspector.ListPendingTasks("default")
+		return inspectErr == nil && len(afterRestart) == 1 && afterRestart[0].Type == tasks.TypePDF
+	}, 10*time.Second, 100*time.Millisecond, "o AOF deve restaurar a tarefa após reiniciar o Redis")
+
+	processed := make(chan struct{}, 1)
+	workers := worker.New(&testsupport.FakeQuerier{})
+	mux := asynq.NewServeMux()
+	mux.HandleFunc(tasks.TypePDF, func(ctx context.Context, task *asynq.Task) error {
+		if err := workers.HandlePDF(ctx, task); err != nil {
+			return err
 		}
-	}
-	assert.True(t, found, "a tarefa document:pdf deve estar na fila default")
+		processed <- struct{}{}
+		return nil
+	})
 
-	// Limpeza.
-	_, _ = insp.DeleteAllPendingTasks("default")
+	server := asynq.NewServer(opt, asynq.Config{Concurrency: 1})
+	go func() {
+		_ = server.Run(mux)
+	}()
+	t.Cleanup(server.Shutdown)
+
+	select {
+	case <-processed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("o worker não processou a tarefa restaurada")
+	}
 }

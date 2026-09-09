@@ -29,10 +29,18 @@ func (h *Handler) generate(c echo.Context) error {
 	}
 	doc, err := h.svc.GeneratePDF(c.Request().Context(), req)
 	if err != nil {
-		if errors.Is(err, ErrPsychologistRequired) {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrPsychologistRequired):
 			return echo.NewHTTPError(http.StatusForbidden, err.Error())
+		case errors.Is(err, ErrPatientNotFound):
+			return echo.NewHTTPError(http.StatusNotFound, err.Error())
+		case errors.Is(err, ErrQueueUnavailable):
+			return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+		default:
+			return echo.NewHTTPError(http.StatusInternalServerError, "falha ao gerar documento")
 		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "falha ao gerar documento")
 	}
 	return c.JSON(http.StatusAccepted, doc)
 }

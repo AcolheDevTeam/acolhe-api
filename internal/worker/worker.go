@@ -1,15 +1,13 @@
 // Package worker contém os handlers das tarefas assíncronas (asynq). Cada handler
 // recebe um *asynq.Task, decodifica o payload e executa o job. Os workers rodam
 // em um processo separado (cmd/worker), consumindo do Redis (spec §4.5, §7).
-//
-// Integrações externas (S3, e-mail, render de PDF) ficam marcadas como TODO —
-// estão fora do escopo de infra deste passo; o esqueleto e o fluxo estão prontos.
 package worker
 
 import (
 	"context"
 	"encoding/json"
 	"log"
+	"time"
 
 	"github.com/hibiken/asynq"
 
@@ -19,11 +17,39 @@ import (
 
 // Workers agrupa os handlers e suas dependências (acesso a dados).
 type Workers struct {
-	q db.Querier
+	q       db.Querier
+	exports LGPDExportRepository
+	store   ExportObjectStore
+	mailer  ExportMailer
+	now     func() time.Time
 }
 
-func New(q db.Querier) *Workers {
-	return &Workers{q: q}
+type Option func(*Workers)
+
+func WithLGPDExport(
+	repository LGPDExportRepository,
+	store ExportObjectStore,
+	mailer ExportMailer,
+) Option {
+	return func(workers *Workers) {
+		workers.exports = repository
+		workers.store = store
+		workers.mailer = mailer
+	}
+}
+
+func WithClock(now func() time.Time) Option {
+	return func(workers *Workers) {
+		workers.now = now
+	}
+}
+
+func New(q db.Querier, options ...Option) *Workers {
+	workers := &Workers{q: q, now: func() time.Time { return time.Now().UTC() }}
+	for _, option := range options {
+		option(workers)
+	}
+	return workers
 }
 
 // Register pendura todos os handlers no mux do asynq.
@@ -31,31 +57,6 @@ func (w *Workers) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(tasks.TypeLGPDExport, w.HandleLGPDExport)
 	mux.HandleFunc(tasks.TypeReminder, w.HandleReminder)
 	mux.HandleFunc(tasks.TypePDF, w.HandlePDF)
-}
-
-// HandleLGPDExport: reúne os dados do paciente, gera PDF + JSON, sobe para o S3,
-// notifica o solicitante e registra a auditoria (spec §7, SLA 24h).
-func (w *Workers) HandleLGPDExport(ctx context.Context, t *asynq.Task) error {
-	var p tasks.LGPDExportPayload
-	if err := json.Unmarshal(t.Payload(), &p); err != nil {
-		return err // payload corrompido: não adianta retentar
-	}
-	log.Printf("[lgpd:export] iniciando exportação do paciente %s", p.PatientID)
-
-	// TODO(Fase infra): fetchAllPatientData → generatePDF + generateJSON →
-	// uploadToS3 → notifyByEmail. Por ora registramos a auditoria (append-only).
-	// OrganizationID nil: job de sistema, sem org no contexto.
-	if err := w.q.WriteAuditLog(ctx, db.WriteAuditLogParams{
-		ActorUserID:    p.RequestedBy,
-		OrganizationID: nil,
-		Action:         "lgpd_export",
-		ResourceType:   "patient",
-		ResourceID:     p.PatientID.String(),
-	}); err != nil {
-		return err // falhou a auditoria: retenta (audit é obrigatório p/ LGPD)
-	}
-	log.Printf("[lgpd:export] concluído (paciente %s)", p.PatientID)
-	return nil
 }
 
 // HandleReminder envia o lembrete do agendamento.

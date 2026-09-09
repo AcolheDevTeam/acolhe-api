@@ -4,6 +4,7 @@ package appointment
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,12 +46,28 @@ const defaultDurationMinutes = 50
 // Create agenda uma sessão, recusando sobreposição na agenda do psicólogo.
 func (s *Service) Create(ctx context.Context, req CreateRequest) (*Appointment, error) {
 	id, ok := tenant.FromContext(ctx)
-	if !ok {
-		return nil, tenant.ErrNoTenant
+	if !ok || id.Role != "psychologist" {
+		return nil, ErrPsychologistRequired
+	}
+	req.Modality = strings.TrimSpace(req.Modality)
+	if req.PatientID == uuid.Nil || req.ScheduledFor.IsZero() ||
+		req.ScheduledFor.Before(time.Date(1900, time.January, 1, 0, 0, 0, 0, time.UTC)) ||
+		req.DurationMinutes < 0 || req.DurationMinutes > 480 ||
+		(req.DurationMinutes > 0 && req.DurationMinutes < 15) ||
+		(req.Modality != "" && req.Modality != "in_person" && req.Modality != "online") {
+		return nil, ErrInvalidInput
 	}
 	psy, err := tenant.Queries(ctx, s.q).GetPsychologistByUser(ctx, id.UserID)
 	if err != nil {
 		return nil, ErrPsychologistRequired
+	}
+	if _, err := tenant.Queries(ctx, s.q).GetPatientForPsychologist(
+		ctx,
+		db.GetPatientForPsychologistParams{
+			ID: req.PatientID, OrganizationID: id.OrgID, PsychologistID: psy.ID,
+		},
+	); err != nil {
+		return nil, ErrNotFound
 	}
 
 	duration := req.DurationMinutes
@@ -63,6 +80,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Appointment, 
 	// Regra: nenhuma janela sobreposta na agenda deste psicólogo.
 	conflicts, err := tenant.Queries(ctx, s.q).CountAppointmentConflicts(ctx, db.CountAppointmentConflictsParams{
 		PsychologistID: psy.ID,
+		OrganizationID: id.OrgID,
 		WindowStart:    windowStart,
 		WindowEnd:      windowEnd,
 	})
@@ -89,6 +107,72 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Appointment, 
 	}
 	return toAppointment(row.ID, row.PatientID, row.PsychologistID, row.ScheduledFor,
 		row.DurationMinutes, row.Modality, row.Status, row.CreatedAt), nil
+}
+
+var allowedStatusTransitions = map[string]map[string]bool{
+	"scheduled": {
+		"confirmed": true, "completed": true, "canceled": true, "no_show": true,
+	},
+	"confirmed": {
+		"completed": true, "canceled": true, "no_show": true,
+	},
+	"completed": {},
+	"canceled":  {},
+	"no_show":   {},
+}
+
+// TransitionStatus applies the appointment state machine with an optimistic
+// current-status predicate. Replaying the same final state is idempotent.
+func (s *Service) TransitionStatus(
+	ctx context.Context,
+	appointmentID uuid.UUID,
+	nextStatus string,
+) (*Appointment, error) {
+	id, ok := tenant.FromContext(ctx)
+	if !ok || id.Role != "psychologist" {
+		return nil, ErrPsychologistRequired
+	}
+	nextStatus = strings.TrimSpace(nextStatus)
+	if appointmentID == uuid.Nil {
+		return nil, ErrInvalidInput
+	}
+	if _, known := allowedStatusTransitions[nextStatus]; !known {
+		return nil, ErrInvalidStatusTransition
+	}
+	q := tenant.Queries(ctx, s.q)
+	psychologist, err := q.GetPsychologistByUser(ctx, id.UserID)
+	if err != nil {
+		return nil, ErrPsychologistRequired
+	}
+	current, err := q.GetAppointmentForPsychologist(ctx, db.GetAppointmentForPsychologistParams{
+		ID: appointmentID, PsychologistID: psychologist.ID, OrganizationID: id.OrgID,
+	})
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	if current.Status == nextStatus {
+		return appointmentFromDetail(current), nil
+	}
+	if !allowedStatusTransitions[current.Status][nextStatus] {
+		return nil, ErrInvalidStatusTransition
+	}
+	updated, err := q.UpdateAppointmentStatus(ctx, db.UpdateAppointmentStatusParams{
+		Status: nextStatus, ID: appointmentID, PsychologistID: psychologist.ID,
+		OrganizationID: id.OrgID, CurrentStatus: current.Status,
+	})
+	if err != nil {
+		latest, latestErr := q.GetAppointmentForPsychologist(
+			ctx,
+			db.GetAppointmentForPsychologistParams{
+				ID: appointmentID, PsychologistID: psychologist.ID, OrganizationID: id.OrgID,
+			},
+		)
+		if latestErr == nil && latest.Status == nextStatus {
+			return appointmentFromDetail(latest), nil
+		}
+		return nil, ErrInvalidStatusTransition
+	}
+	return appointmentFromUpdated(updated), nil
 }
 
 // List devolve a agenda do psicólogo autenticado.
@@ -128,4 +212,18 @@ func toAppointment(id, patientID, psyID uuid.UUID, scheduledFor time.Time,
 		Status:          status,
 		CreatedAt:       createdAt,
 	}
+}
+
+func appointmentFromDetail(row db.GetAppointmentForPsychologistRow) *Appointment {
+	return toAppointment(
+		row.ID, row.PatientID, row.PsychologistID, row.ScheduledFor,
+		row.DurationMinutes, row.Modality, row.Status, row.CreatedAt,
+	)
+}
+
+func appointmentFromUpdated(row db.UpdateAppointmentStatusRow) *Appointment {
+	return toAppointment(
+		row.ID, row.PatientID, row.PsychologistID, row.ScheduledFor,
+		row.DurationMinutes, row.Modality, row.Status, row.CreatedAt,
+	)
 }

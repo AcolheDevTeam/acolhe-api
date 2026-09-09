@@ -27,11 +27,49 @@ services:
       retries: 10
     # sem `ports:` — Postgres fica só na rede interna do compose, nunca exposto
 
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB}
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_CRON: "${BACKUP_CRON:-0 3 * * *}"
+      BACKUP_RETENTION_DAYS: "${BACKUP_RETENTION_DAYS:-7}"
+    entrypoint: ["sh", "/scripts/entrypoint.sh"]
+    volumes:
+      - ./backup:/scripts:ro
+      - ./backups:/backups
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    command: ["redis-server", "--save", "", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory", "64mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redisdata:/data
     # sem `ports:` — Redis fica só na rede interna
+
+  # Garante que API e worker usem um role sem BYPASSRLS. É idempotente e também
+  # atualiza grants para bancos já existentes antes de aplicar novas migrations.
+  db-role:
+    image: postgres:16-alpine
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD}
+    entrypoint: ["sh", "/scripts/configure-app-role.sh"]
+    volumes:
+      - ./postgres-init:/scripts:ro
 
   # Aplica migrations pendentes (Atlas) antes da API/worker subirem. Roda e sai.
   migrate:
@@ -41,6 +79,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      db-role:
+        condition: service_completed_successfully
     entrypoint: ["atlas", "migrate", "apply", "--dir", "file:///migrations", "--url", "${DATABASE_URL}"]
 
   api:
@@ -54,7 +94,7 @@ services:
         condition: service_completed_successfully
     environment:
       PORT: "8080"
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${APP_DATABASE_URL}
       REDIS_ADDR: redis:6379
       JWT_SECRET: ${JWT_SECRET}
     # sem `ports:` — quem expõe pra internet é o Caddy (HTTPS). A API fica interna.
@@ -75,8 +115,18 @@ services:
         condition: service_completed_successfully
     entrypoint: ["worker"]
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${APP_DATABASE_URL}
       REDIS_ADDR: redis:6379
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_REGION: ${S3_REGION}
+      S3_BUCKET: ${S3_BUCKET}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_SESSION_TOKEN: ${S3_SESSION_TOKEN:-}
+      SMTP_ADDRESS: ${SMTP_ADDRESS}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM: ${SMTP_FROM}
 
   # Reverse proxy com HTTPS automático (Let's Encrypt/ZeroSSL) para ${CADDY_DOMAIN}.
   # CADDY_DOMAIN é injetado pelo workflow de deploy a partir do IP (ex.: 1.2.3.4.nip.io).
@@ -96,5 +146,6 @@ services:
 
 volumes:
   pgdata:
+  redisdata:
   caddy_data:
   caddy_config:

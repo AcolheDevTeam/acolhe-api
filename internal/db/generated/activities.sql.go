@@ -13,6 +13,31 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimAssignmentForSubmission = `-- name: ClaimAssignmentForSubmission :execrows
+UPDATE activity_assignment ag
+SET status = 'submitted', updated_at = now()
+FROM patient_profile p
+WHERE ag.id = $1
+  AND p.id = ag.patient_id
+  AND ag.patient_id = $2
+  AND p.organization_id = $3
+  AND ag.status IN ('pending', 'in_progress')
+`
+
+type ClaimAssignmentForSubmissionParams struct {
+	ID             uuid.UUID `json:"id"`
+	PatientID      uuid.UUID `json:"patient_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+}
+
+func (q *Queries) ClaimAssignmentForSubmission(ctx context.Context, arg ClaimAssignmentForSubmissionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, claimAssignmentForSubmission, arg.ID, arg.PatientID, arg.OrganizationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createAssignment = `-- name: CreateAssignment :one
 INSERT INTO activity_assignment
   (template_id, template_version, patient_id, assigner_id, status, scheduled_for, due_at)
@@ -65,8 +90,172 @@ func (q *Queries) CreateAssignment(ctx context.Context, arg CreateAssignmentPara
 	return i, err
 }
 
+const getActivityReviewMetadata = `-- name: GetActivityReviewMetadata :one
+SELECT ag.id, ag.template_id, ag.template_version, ag.patient_id,
+       p.full_name AS patient_name, ag.assigner_id, ag.status,
+       ag.due_at, ag.created_at, ag.reviewed_at,
+       t.title, ty.code AS type,
+       CAST(COALESCE(response.id::text, '') AS text) AS response_id, response.submitted_at,
+       activity_submission_is_complete(ag.id) AS submission_complete,
+       (SELECT count(*)::integer FROM activity_field field
+        WHERE field.template_id = ag.template_id) AS field_count
+FROM activity_assignment ag
+JOIN patient_profile p ON p.id = ag.patient_id
+JOIN activity_template t ON t.id = ag.template_id
+JOIN activity_type ty ON ty.id = t.type_id
+LEFT JOIN LATERAL (
+  SELECT r.id, r.submitted_at
+  FROM activity_response r
+  WHERE r.assignment_id = ag.id AND NOT r.is_draft
+  ORDER BY r.submitted_at DESC NULLS LAST, r.created_at DESC
+  LIMIT 1
+) response ON true
+WHERE ag.id = $1
+  AND p.organization_id = $2
+  AND ag.assigner_id = $3
+`
+
+type GetActivityReviewMetadataParams struct {
+	ID             uuid.UUID `json:"id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	AssignerID     uuid.UUID `json:"assigner_id"`
+}
+
+type GetActivityReviewMetadataRow struct {
+	ID                 uuid.UUID  `json:"id"`
+	TemplateID         uuid.UUID  `json:"template_id"`
+	TemplateVersion    int32      `json:"template_version"`
+	PatientID          uuid.UUID  `json:"patient_id"`
+	PatientName        string     `json:"patient_name"`
+	AssignerID         uuid.UUID  `json:"assigner_id"`
+	Status             string     `json:"status"`
+	DueAt              *time.Time `json:"due_at"`
+	CreatedAt          time.Time  `json:"created_at"`
+	ReviewedAt         *time.Time `json:"reviewed_at"`
+	Title              string     `json:"title"`
+	Type               string     `json:"type"`
+	ResponseID         string     `json:"response_id"`
+	SubmittedAt        *time.Time `json:"submitted_at"`
+	SubmissionComplete bool       `json:"submission_complete"`
+	FieldCount         int32      `json:"field_count"`
+}
+
+func (q *Queries) GetActivityReviewMetadata(ctx context.Context, arg GetActivityReviewMetadataParams) (GetActivityReviewMetadataRow, error) {
+	row := q.db.QueryRow(ctx, getActivityReviewMetadata, arg.ID, arg.OrganizationID, arg.AssignerID)
+	var i GetActivityReviewMetadataRow
+	err := row.Scan(
+		&i.ID,
+		&i.TemplateID,
+		&i.TemplateVersion,
+		&i.PatientID,
+		&i.PatientName,
+		&i.AssignerID,
+		&i.Status,
+		&i.DueAt,
+		&i.CreatedAt,
+		&i.ReviewedAt,
+		&i.Title,
+		&i.Type,
+		&i.ResponseID,
+		&i.SubmittedAt,
+		&i.SubmissionComplete,
+		&i.FieldCount,
+	)
+	return i, err
+}
+
+const getActivityTemplateInOrg = `-- name: GetActivityTemplateInOrg :one
+SELECT t.id, t.title, ty.code AS type, t.version
+FROM activity_template t
+JOIN activity_type ty ON ty.id = t.type_id
+WHERE t.id = $1
+  AND (t.organization_id = $2 OR t.organization_id IS NULL)
+  AND t.is_archived = false
+`
+
+type GetActivityTemplateInOrgParams struct {
+	ID             uuid.UUID  `json:"id"`
+	OrganizationID *uuid.UUID `json:"organization_id"`
+}
+
+type GetActivityTemplateInOrgRow struct {
+	ID      uuid.UUID `json:"id"`
+	Title   string    `json:"title"`
+	Type    string    `json:"type"`
+	Version int32     `json:"version"`
+}
+
+func (q *Queries) GetActivityTemplateInOrg(ctx context.Context, arg GetActivityTemplateInOrgParams) (GetActivityTemplateInOrgRow, error) {
+	row := q.db.QueryRow(ctx, getActivityTemplateInOrg, arg.ID, arg.OrganizationID)
+	var i GetActivityTemplateInOrgRow
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Type,
+		&i.Version,
+	)
+	return i, err
+}
+
+const getAssignmentDetailInOrg = `-- name: GetAssignmentDetailInOrg :one
+SELECT ag.id, ag.template_id, ag.patient_id, p.full_name AS patient_name,
+       ag.status, ag.due_at, ag.created_at,
+       t.title, ty.code AS type, latest.submitted_at AS responded_at
+FROM activity_assignment ag
+JOIN patient_profile p ON p.id = ag.patient_id
+JOIN activity_template t ON t.id = ag.template_id
+JOIN activity_type ty ON ty.id = t.type_id
+LEFT JOIN LATERAL (
+  SELECT submitted_at
+  FROM activity_response
+  WHERE assignment_id = ag.id AND is_draft = false
+  ORDER BY submitted_at DESC NULLS LAST
+  LIMIT 1
+) latest ON true
+WHERE ag.id = $1
+  AND p.organization_id = $2
+  AND ag.assigner_id = $3
+`
+
+type GetAssignmentDetailInOrgParams struct {
+	ID             uuid.UUID `json:"id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	AssignerID     uuid.UUID `json:"assigner_id"`
+}
+
+type GetAssignmentDetailInOrgRow struct {
+	ID          uuid.UUID  `json:"id"`
+	TemplateID  uuid.UUID  `json:"template_id"`
+	PatientID   uuid.UUID  `json:"patient_id"`
+	PatientName string     `json:"patient_name"`
+	Status      string     `json:"status"`
+	DueAt       *time.Time `json:"due_at"`
+	CreatedAt   time.Time  `json:"created_at"`
+	Title       string     `json:"title"`
+	Type        string     `json:"type"`
+	RespondedAt *time.Time `json:"responded_at"`
+}
+
+func (q *Queries) GetAssignmentDetailInOrg(ctx context.Context, arg GetAssignmentDetailInOrgParams) (GetAssignmentDetailInOrgRow, error) {
+	row := q.db.QueryRow(ctx, getAssignmentDetailInOrg, arg.ID, arg.OrganizationID, arg.AssignerID)
+	var i GetAssignmentDetailInOrgRow
+	err := row.Scan(
+		&i.ID,
+		&i.TemplateID,
+		&i.PatientID,
+		&i.PatientName,
+		&i.Status,
+		&i.DueAt,
+		&i.CreatedAt,
+		&i.Title,
+		&i.Type,
+		&i.RespondedAt,
+	)
+	return i, err
+}
+
 const getAssignmentInOrg = `-- name: GetAssignmentInOrg :one
-SELECT ag.id, ag.patient_id, ag.status
+SELECT ag.id, ag.patient_id, ag.assigner_id, ag.status
 FROM activity_assignment ag
 JOIN patient_profile p ON p.id = ag.patient_id
 WHERE ag.id = $1 AND p.organization_id = $2
@@ -78,37 +267,125 @@ type GetAssignmentInOrgParams struct {
 }
 
 type GetAssignmentInOrgRow struct {
-	ID        uuid.UUID `json:"id"`
-	PatientID uuid.UUID `json:"patient_id"`
-	Status    string    `json:"status"`
+	ID         uuid.UUID `json:"id"`
+	PatientID  uuid.UUID `json:"patient_id"`
+	AssignerID uuid.UUID `json:"assigner_id"`
+	Status     string    `json:"status"`
 }
 
 // Confirma que o assignment existe e pertence à organização (via paciente).
 func (q *Queries) GetAssignmentInOrg(ctx context.Context, arg GetAssignmentInOrgParams) (GetAssignmentInOrgRow, error) {
 	row := q.db.QueryRow(ctx, getAssignmentInOrg, arg.ID, arg.OrganizationID)
 	var i GetAssignmentInOrgRow
-	err := row.Scan(&i.ID, &i.PatientID, &i.Status)
+	err := row.Scan(
+		&i.ID,
+		&i.PatientID,
+		&i.AssignerID,
+		&i.Status,
+	)
 	return i, err
 }
 
+const listActivityReviewValues = `-- name: ListActivityReviewValues :many
+SELECT field.id AS field_id, field.code AS field_code, field.label,
+       field.field_type, field.config, field.display_order,
+       value.value_text, value.value_number, value.value_boolean,
+       value.value_datetime, value.value_json, value.attachment_id,
+       attachment.mime_type, attachment.size_bytes
+FROM activity_assignment assignment
+JOIN patient_profile patient ON patient.id = assignment.patient_id
+JOIN activity_response response ON response.assignment_id = assignment.id
+  AND response.id = $1
+  AND NOT response.is_draft
+JOIN activity_response_value value ON value.response_id = response.id
+JOIN activity_field field ON field.id = value.field_id
+LEFT JOIN attachment ON attachment.id = value.attachment_id
+WHERE assignment.id = $2
+  AND patient.organization_id = $3
+  AND assignment.assigner_id = $4
+ORDER BY field.display_order, field.id
+`
+
+type ListActivityReviewValuesParams struct {
+	ResponseID     uuid.UUID `json:"response_id"`
+	AssignmentID   uuid.UUID `json:"assignment_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	AssignerID     uuid.UUID `json:"assigner_id"`
+}
+
+type ListActivityReviewValuesRow struct {
+	FieldID       uuid.UUID      `json:"field_id"`
+	FieldCode     string         `json:"field_code"`
+	Label         string         `json:"label"`
+	FieldType     string         `json:"field_type"`
+	Config        []byte         `json:"config"`
+	DisplayOrder  int32          `json:"display_order"`
+	ValueText     *string        `json:"value_text"`
+	ValueNumber   pgtype.Numeric `json:"value_number"`
+	ValueBoolean  *bool          `json:"value_boolean"`
+	ValueDatetime *time.Time     `json:"value_datetime"`
+	ValueJson     []byte         `json:"value_json"`
+	AttachmentID  *uuid.UUID     `json:"attachment_id"`
+	MimeType      *string        `json:"mime_type"`
+	SizeBytes     *int32         `json:"size_bytes"`
+}
+
+func (q *Queries) ListActivityReviewValues(ctx context.Context, arg ListActivityReviewValuesParams) ([]ListActivityReviewValuesRow, error) {
+	rows, err := q.db.Query(ctx, listActivityReviewValues,
+		arg.ResponseID,
+		arg.AssignmentID,
+		arg.OrganizationID,
+		arg.AssignerID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActivityReviewValuesRow
+	for rows.Next() {
+		var i ListActivityReviewValuesRow
+		if err := rows.Scan(
+			&i.FieldID,
+			&i.FieldCode,
+			&i.Label,
+			&i.FieldType,
+			&i.Config,
+			&i.DisplayOrder,
+			&i.ValueText,
+			&i.ValueNumber,
+			&i.ValueBoolean,
+			&i.ValueDatetime,
+			&i.ValueJson,
+			&i.AttachmentID,
+			&i.MimeType,
+			&i.SizeBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listActivityTemplates = `-- name: ListActivityTemplates :many
-SELECT id, type_id, organization_id, author_id, title, description, version, is_archived, created_at
-FROM activity_template
-WHERE (organization_id = $1 OR organization_id IS NULL)
-  AND is_archived = false
-ORDER BY title
+SELECT t.id, t.title, ty.code AS type, t.description, t.version, t.created_at
+FROM activity_template t
+JOIN activity_type ty ON ty.id = t.type_id
+WHERE (t.organization_id = $1 OR t.organization_id IS NULL)
+  AND t.is_archived = false
+ORDER BY t.title
 `
 
 type ListActivityTemplatesRow struct {
-	ID             uuid.UUID  `json:"id"`
-	TypeID         uuid.UUID  `json:"type_id"`
-	OrganizationID *uuid.UUID `json:"organization_id"`
-	AuthorID       uuid.UUID  `json:"author_id"`
-	Title          string     `json:"title"`
-	Description    *string    `json:"description"`
-	Version        int32      `json:"version"`
-	IsArchived     bool       `json:"is_archived"`
-	CreatedAt      time.Time  `json:"created_at"`
+	ID          uuid.UUID `json:"id"`
+	Title       string    `json:"title"`
+	Type        string    `json:"type"`
+	Description *string   `json:"description"`
+	Version     int32     `json:"version"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Templates da organização (organization_id pode ser nulo p/ templates globais).
@@ -123,13 +400,10 @@ func (q *Queries) ListActivityTemplates(ctx context.Context, organizationID *uui
 		var i ListActivityTemplatesRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TypeID,
-			&i.OrganizationID,
-			&i.AuthorID,
 			&i.Title,
+			&i.Type,
 			&i.Description,
 			&i.Version,
-			&i.IsArchived,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -143,34 +417,47 @@ func (q *Queries) ListActivityTemplates(ctx context.Context, organizationID *uui
 }
 
 const listAssignmentsByPatient = `-- name: ListAssignmentsByPatient :many
-SELECT ag.id, ag.template_id, ag.template_version, ag.patient_id, ag.assigner_id,
-       ag.status, ag.scheduled_for, ag.due_at, ag.created_at
+SELECT ag.id, ag.template_id, ag.patient_id, p.full_name AS patient_name,
+       ag.status, ag.due_at, ag.created_at,
+       t.title, ty.code AS type, latest.submitted_at AS responded_at
 FROM activity_assignment ag
 JOIN patient_profile p ON p.id = ag.patient_id
+JOIN activity_template t ON t.id = ag.template_id
+JOIN activity_type ty ON ty.id = t.type_id
+LEFT JOIN LATERAL (
+  SELECT submitted_at
+  FROM activity_response
+  WHERE assignment_id = ag.id AND is_draft = false
+  ORDER BY submitted_at DESC NULLS LAST
+  LIMIT 1
+) latest ON true
 WHERE ag.patient_id = $1
   AND p.organization_id = $2
+  AND ag.assigner_id = $3
 ORDER BY ag.created_at DESC
 `
 
 type ListAssignmentsByPatientParams struct {
 	PatientID      uuid.UUID `json:"patient_id"`
 	OrganizationID uuid.UUID `json:"organization_id"`
+	AssignerID     uuid.UUID `json:"assigner_id"`
 }
 
 type ListAssignmentsByPatientRow struct {
-	ID              uuid.UUID  `json:"id"`
-	TemplateID      uuid.UUID  `json:"template_id"`
-	TemplateVersion int32      `json:"template_version"`
-	PatientID       uuid.UUID  `json:"patient_id"`
-	AssignerID      uuid.UUID  `json:"assigner_id"`
-	Status          string     `json:"status"`
-	ScheduledFor    *time.Time `json:"scheduled_for"`
-	DueAt           *time.Time `json:"due_at"`
-	CreatedAt       time.Time  `json:"created_at"`
+	ID          uuid.UUID  `json:"id"`
+	TemplateID  uuid.UUID  `json:"template_id"`
+	PatientID   uuid.UUID  `json:"patient_id"`
+	PatientName string     `json:"patient_name"`
+	Status      string     `json:"status"`
+	DueAt       *time.Time `json:"due_at"`
+	CreatedAt   time.Time  `json:"created_at"`
+	Title       string     `json:"title"`
+	Type        string     `json:"type"`
+	RespondedAt *time.Time `json:"responded_at"`
 }
 
 func (q *Queries) ListAssignmentsByPatient(ctx context.Context, arg ListAssignmentsByPatientParams) ([]ListAssignmentsByPatientRow, error) {
-	rows, err := q.db.Query(ctx, listAssignmentsByPatient, arg.PatientID, arg.OrganizationID)
+	rows, err := q.db.Query(ctx, listAssignmentsByPatient, arg.PatientID, arg.OrganizationID, arg.AssignerID)
 	if err != nil {
 		return nil, err
 	}
@@ -181,13 +468,83 @@ func (q *Queries) ListAssignmentsByPatient(ctx context.Context, arg ListAssignme
 		if err := rows.Scan(
 			&i.ID,
 			&i.TemplateID,
-			&i.TemplateVersion,
 			&i.PatientID,
-			&i.AssignerID,
+			&i.PatientName,
 			&i.Status,
-			&i.ScheduledFor,
 			&i.DueAt,
 			&i.CreatedAt,
+			&i.Title,
+			&i.Type,
+			&i.RespondedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAssignmentsByPsychologist = `-- name: ListAssignmentsByPsychologist :many
+SELECT ag.id, ag.template_id, ag.patient_id, p.full_name AS patient_name,
+       ag.status, ag.due_at, ag.created_at,
+       t.title, ty.code AS type, latest.submitted_at AS responded_at
+FROM activity_assignment ag
+JOIN patient_profile p ON p.id = ag.patient_id
+JOIN activity_template t ON t.id = ag.template_id
+JOIN activity_type ty ON ty.id = t.type_id
+LEFT JOIN LATERAL (
+  SELECT submitted_at
+  FROM activity_response
+  WHERE assignment_id = ag.id AND is_draft = false
+  ORDER BY submitted_at DESC NULLS LAST
+  LIMIT 1
+) latest ON true
+WHERE p.organization_id = $1
+  AND ag.assigner_id = $2
+ORDER BY ag.created_at DESC
+`
+
+type ListAssignmentsByPsychologistParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	AssignerID     uuid.UUID `json:"assigner_id"`
+}
+
+type ListAssignmentsByPsychologistRow struct {
+	ID          uuid.UUID  `json:"id"`
+	TemplateID  uuid.UUID  `json:"template_id"`
+	PatientID   uuid.UUID  `json:"patient_id"`
+	PatientName string     `json:"patient_name"`
+	Status      string     `json:"status"`
+	DueAt       *time.Time `json:"due_at"`
+	CreatedAt   time.Time  `json:"created_at"`
+	Title       string     `json:"title"`
+	Type        string     `json:"type"`
+	RespondedAt *time.Time `json:"responded_at"`
+}
+
+func (q *Queries) ListAssignmentsByPsychologist(ctx context.Context, arg ListAssignmentsByPsychologistParams) ([]ListAssignmentsByPsychologistRow, error) {
+	rows, err := q.db.Query(ctx, listAssignmentsByPsychologist, arg.OrganizationID, arg.AssignerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAssignmentsByPsychologistRow
+	for rows.Next() {
+		var i ListAssignmentsByPsychologistRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TemplateID,
+			&i.PatientID,
+			&i.PatientName,
+			&i.Status,
+			&i.DueAt,
+			&i.CreatedAt,
+			&i.Title,
+			&i.Type,
+			&i.RespondedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -250,6 +607,34 @@ WHERE id = $1
 func (q *Queries) MarkAssignmentSubmitted(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, markAssignmentSubmitted, id)
 	return err
+}
+
+const markCompleteAssignmentReviewed = `-- name: MarkCompleteAssignmentReviewed :execrows
+UPDATE activity_assignment ag
+SET status = 'reviewed',
+    reviewed_at = COALESCE(reviewed_at, now()),
+    updated_at = now()
+FROM patient_profile p
+WHERE ag.id = $1
+  AND p.id = ag.patient_id
+  AND p.organization_id = $2
+  AND ag.assigner_id = $3
+  AND ag.status = 'submitted'
+  AND activity_submission_is_complete(ag.id)
+`
+
+type MarkCompleteAssignmentReviewedParams struct {
+	ID             uuid.UUID `json:"id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	AssignerID     uuid.UUID `json:"assigner_id"`
+}
+
+func (q *Queries) MarkCompleteAssignmentReviewed(ctx context.Context, arg MarkCompleteAssignmentReviewedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markCompleteAssignmentReviewed, arg.ID, arg.OrganizationID, arg.AssignerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const submitResponse = `-- name: SubmitResponse :one

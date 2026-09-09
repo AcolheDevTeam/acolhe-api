@@ -24,7 +24,7 @@ import (
 func TenantTx(pool *pgxpool.Pool) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			if pool == nil || isPublicPath(c.Path()) {
+			if pool == nil || publicPaths[c.Path()] {
 				return next(c)
 			}
 			id, ok := tenant.FromContext(c.Request().Context())

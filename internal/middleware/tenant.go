@@ -20,7 +20,7 @@ import (
 func Tenant() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			if isPublicPath(c.Path()) {
+			if publicPaths[c.Path()] {
 				return next(c)
 			}
 

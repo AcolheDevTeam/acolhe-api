@@ -5,9 +5,9 @@ resolvido exclusivamente pelo `userId` do JWT; não há `patientId` em query,
 
 ## Aceite e identidade
 
-- `POST /invitations/:token/accept`
-  - Público. Corpo: `{ "password": "...", "consentVersion": "..." }`.
-  - O token é de uso único. A resposta identifica apenas o usuário criado.
+- `POST /onboarding/invitations/:token/accept`
+  - Público. Corpo: `{ "password": "...", "acceptedDocumentIds": ["..."] }`.
+  - O aceite é idempotente e a resposta identifica apenas as identidades criadas.
 - `POST /login`
   - Corpo: `{ "email": "...", "password": "..." }`.
 - `GET /me`

@@ -12,11 +12,15 @@ import (
 
 type Querier interface {
 	AcceptPatientInvitation(ctx context.Context, arg AcceptPatientInvitationParams) (AcceptPatientInvitationRow, error)
+	ArchiveActivityTemplate(ctx context.Context, arg ArchiveActivityTemplateParams) (int64, error)
 	ClaimAssignmentForSubmission(ctx context.Context, arg ClaimAssignmentForSubmissionParams) (int64, error)
 	// Conta agendamentos do psicólogo cujo intervalo se sobrepõe à janela informada.
 	// tstzrange(...) && tstzrange(...) testa interseção de intervalos.
 	// O service calcula window_end = scheduled_for + duration; assim a query só recebe timestamptz.
 	CountAppointmentConflicts(ctx context.Context, arg CountAppointmentConflictsParams) (int64, error)
+	CountAssignmentsByTemplate(ctx context.Context, templateID uuid.UUID) (int64, error)
+	CreateActivityField(ctx context.Context, arg CreateActivityFieldParams) (uuid.UUID, error)
+	CreateActivityTemplate(ctx context.Context, arg CreateActivityTemplateParams) (CreateActivityTemplateRow, error)
 	CreateAppointment(ctx context.Context, arg CreateAppointmentParams) (CreateAppointmentRow, error)
 	CreateAssignment(ctx context.Context, arg CreateAssignmentParams) (CreateAssignmentRow, error)
 	// Isolamento de org garantido pela checagem do paciente na mesma org (no service).
@@ -30,11 +34,18 @@ type Querier interface {
 	CreatePatientRelationship(ctx context.Context, arg CreatePatientRelationshipParams) (uuid.UUID, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (CreateSessionRow, error)
 	DeclinePatientInvitation(ctx context.Context, arg DeclinePatientInvitationParams) (uuid.UUID, error)
+	// Usado apenas na edição no lugar, quando o template nunca foi atribuído
+	// (portanto não há activity_response_value apontando para os campos).
+	DeleteActivityFields(ctx context.Context, templateID uuid.UUID) error
 	// patient_relationship não tem organization_id; o isolamento de org é feito
 	// pelo join em patient_profile (que carrega organization_id).
 	GetActiveRelationship(ctx context.Context, arg GetActiveRelationshipParams) (GetActiveRelationshipRow, error)
 	GetActivityReviewMetadata(ctx context.Context, arg GetActivityReviewMetadataParams) (GetActivityReviewMetadataRow, error)
+	// Detalhe de um template visível à organização (inclui arquivados e versões antigas).
+	GetActivityTemplateDetail(ctx context.Context, arg GetActivityTemplateDetailParams) (GetActivityTemplateDetailRow, error)
+	// Template atribuível: visível à organização, não arquivado e sem versão mais nova.
 	GetActivityTemplateInOrg(ctx context.Context, arg GetActivityTemplateInOrgParams) (GetActivityTemplateInOrgRow, error)
+	GetActivityTypeByCode(ctx context.Context, code string) (GetActivityTypeByCodeRow, error)
 	GetAppointmentForPsychologist(ctx context.Context, arg GetAppointmentForPsychologistParams) (GetAppointmentForPsychologistRow, error)
 	GetAssignmentDetailInOrg(ctx context.Context, arg GetAssignmentDetailInOrgParams) (GetAssignmentDetailInOrgRow, error)
 	// Confirma que o assignment existe e pertence à organização (via paciente).
@@ -65,8 +76,11 @@ type Querier interface {
 	GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow, error)
 	HealthCheck(ctx context.Context) (int32, error)
+	ListActivityFields(ctx context.Context, templateID uuid.UUID) ([]ListActivityFieldsRow, error)
 	ListActivityReviewValues(ctx context.Context, arg ListActivityReviewValuesParams) ([]ListActivityReviewValuesRow, error)
-	// Templates da organização (organization_id pode ser nulo p/ templates globais).
+	// Biblioteca visível à organização: templates dela + globais (organization_id nulo),
+	// só a versão mais recente de cada linhagem (sem filho em parent_template_id) e
+	// não arquivados.
 	ListActivityTemplates(ctx context.Context, organizationID *uuid.UUID) ([]ListActivityTemplatesRow, error)
 	ListAppointmentsByPsychologist(ctx context.Context, arg ListAppointmentsByPsychologistParams) ([]ListAppointmentsByPsychologistRow, error)
 	ListAssignmentsByPatient(ctx context.Context, arg ListAssignmentsByPatientParams) ([]ListAssignmentsByPatientRow, error)
@@ -92,6 +106,8 @@ type Querier interface {
 	ReissuePatientInvitation(ctx context.Context, arg ReissuePatientInvitationParams) (ReissuePatientInvitationRow, error)
 	// Cria (submete) a resposta de uma atividade e marca o assignment como submitted.
 	SubmitResponse(ctx context.Context, arg SubmitResponseParams) (SubmitResponseRow, error)
+	// Edição no lugar: só a autora, na própria organização, e nunca em template arquivado.
+	UpdateActivityTemplateInPlace(ctx context.Context, arg UpdateActivityTemplateInPlaceParams) (int64, error)
 	UpdateAppointmentStatus(ctx context.Context, arg UpdateAppointmentStatusParams) (UpdateAppointmentStatusRow, error)
 	WriteAuditLog(ctx context.Context, arg WriteAuditLogParams) error
 }

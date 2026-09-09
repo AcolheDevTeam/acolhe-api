@@ -3,8 +3,9 @@ package patient_test
 import (
 	"testing"
 
-	"github.com/joycesilva/acolhe-api/internal/patient"
 	"github.com/stretchr/testify/require"
+
+	"github.com/joycesilva/acolhe-api/internal/patient"
 )
 
 func TestSMTPMailerDoesNotExposeMessageWhenProviderIsMissing(t *testing.T) {

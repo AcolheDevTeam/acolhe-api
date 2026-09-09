@@ -44,12 +44,18 @@ func signupPool(t *testing.T) *pgxpool.Pool {
 	require.NoError(t, err)
 	_, err = pool.Exec(ctx, string(schema))
 	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `
+		INSERT INTO consent_document (scope, version, title, content, content_sha256, required, published_at)
+		VALUES
+			('terms_of_use', '0.3', 'Termos de Uso', 'Termos de Uso do Acolhe.', encode(digest('Termos de Uso do Acolhe.', 'sha256'), 'hex'), true, now()),
+			('privacy_policy', '0.3', 'Política de Privacidade', 'Política de Privacidade do Acolhe.', encode(digest('Política de Privacidade do Acolhe.', 'sha256'), 'hex'), true, now())`)
+	require.NoError(t, err)
 	return pool
 }
 
 func signupRequest(t *testing.T, srv *httptest.Server, email, crp string) *http.Response {
 	t.Helper()
-	body := `{"email":"` + email + `","password":"senha-segura-123","fullName":"Mariana Sá","crpNumber":"` + crp + `","crpState":"06","acceptTerms":true,"termsVersion":"0.3"}`
+	body := `{"email":"` + email + `","password":"senha-segura-123","fullName":"Mariana Sá","crpNumber":"` + crp + `","crpState":"06","acceptTerms":true,"acceptPrivacy":true,"termsVersion":"0.3","privacyVersion":"0.3"}`
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/signup", strings.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
@@ -82,7 +88,10 @@ func TestSignup_AtomicAndSafeResponse(t *testing.T) {
 	assert.Equal(t, "1", organizations)
 	assert.Equal(t, "1", users)
 	assert.Equal(t, "1", profiles)
-	assert.Equal(t, "1", consents)
+	assert.Equal(t, "2", consents)
+	var consentDocuments string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*)::text FROM consent_document WHERE scope IN ('terms_of_use', 'privacy_policy')`).Scan(&consentDocuments))
+	assert.Equal(t, "2", consentDocuments)
 	assert.True(t, strings.HasPrefix(passwordHash, "$2"))
 }
 

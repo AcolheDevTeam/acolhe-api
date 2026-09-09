@@ -75,7 +75,7 @@ CREATE TABLE patient_profile (
 
 CREATE TABLE consent_document (
   id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  scope          text NOT NULL CHECK (scope IN ('health_data','communications','aggregate_statistics')),
+  scope          text NOT NULL CHECK (scope IN ('health_data','communications','aggregate_statistics','terms_of_use','privacy_policy')),
   version        text NOT NULL,
   title          text NOT NULL,
   content        text NOT NULL,

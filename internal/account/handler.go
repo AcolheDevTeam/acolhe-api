@@ -28,15 +28,17 @@ type loginRequest struct {
 }
 
 type signupRequest struct {
-	Email        string `json:"email"`
-	Password     string `json:"password"`
-	FullName     string `json:"fullName"`
-	CRPNumber    string `json:"crpNumber"`
-	CRPState     string `json:"crpState"`
-	CPF          string `json:"cpf"`
-	Approach     string `json:"approach"`
-	AcceptTerms  bool   `json:"acceptTerms"`
-	TermsVersion string `json:"termsVersion"`
+	Email          string `json:"email"`
+	Password       string `json:"password"`
+	FullName       string `json:"fullName"`
+	CRPNumber      string `json:"crpNumber"`
+	CRPState       string `json:"crpState"`
+	CPF            string `json:"cpf"`
+	Approach       string `json:"approach"`
+	AcceptTerms    bool   `json:"acceptTerms"`
+	AcceptPrivacy  bool   `json:"acceptPrivacy"`
+	TermsVersion   string `json:"termsVersion"`
+	PrivacyVersion string `json:"privacyVersion"`
 }
 
 func (h *Handler) signup(c echo.Context) error {
@@ -47,7 +49,8 @@ func (h *Handler) signup(c echo.Context) error {
 	res, err := h.svc.Signup(c.Request().Context(), SignupInput{
 		Email: req.Email, Password: req.Password, FullName: req.FullName,
 		CRPNumber: req.CRPNumber, CRPState: req.CRPState, CPF: req.CPF,
-		Approach: req.Approach, AcceptTerms: req.AcceptTerms, TermsVersion: req.TermsVersion,
+		Approach: req.Approach, AcceptTerms: req.AcceptTerms, AcceptPrivacy: req.AcceptPrivacy,
+		TermsVersion: req.TermsVersion, PrivacyVersion: req.PrivacyVersion,
 		IPAddress: net.ParseIP(c.RealIP()),
 	})
 	if err != nil {

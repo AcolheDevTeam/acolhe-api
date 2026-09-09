@@ -15,6 +15,8 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -71,6 +73,15 @@ type LoginResult struct {
 
 const signupTermsVersion = "0.3"
 
+var signupEmailPattern = regexp.MustCompile(`^[A-Za-z0-9.!#$%&'*+/=?^_` + "`" + `{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$`)
+
+var validCRPRegions = map[string]struct{}{
+	"01": {}, "02": {}, "03": {}, "04": {}, "05": {}, "06": {},
+	"07": {}, "08": {}, "09": {}, "10": {}, "11": {}, "12": {},
+	"13": {}, "14": {}, "15": {}, "16": {}, "17": {}, "18": {},
+	"19": {}, "20": {}, "21": {}, "22": {}, "23": {}, "24": {},
+}
+
 var (
 	ErrSignupConflict    = errors.New("cadastro não pôde ser concluído")
 	ErrSignupInvalid     = errors.New("dados de cadastro inválidos")
@@ -78,16 +89,18 @@ var (
 )
 
 type SignupInput struct {
-	Email        string
-	Password     string
-	FullName     string
-	CRPNumber    string
-	CRPState     string
-	CPF          string
-	Approach     string
-	AcceptTerms  bool
-	TermsVersion string
-	IPAddress    net.IP
+	Email          string
+	Password       string
+	FullName       string
+	CRPNumber      string
+	CRPState       string
+	CPF            string
+	Approach       string
+	AcceptTerms    bool
+	AcceptPrivacy  bool
+	TermsVersion   string
+	PrivacyVersion string
+	IPAddress      net.IP
 }
 
 type SignupResult struct {
@@ -97,19 +110,17 @@ type SignupResult struct {
 	CRPStatus        string    `json:"crpStatus"`
 	OnboardingStatus string    `json:"onboardingStatus"`
 	TermsVersion     string    `json:"termsVersion"`
+	PrivacyVersion   string    `json:"privacyVersion"`
 }
 
 func (s *Service) Signup(ctx context.Context, in SignupInput) (*SignupResult, error) {
 	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
 	in.FullName = strings.TrimSpace(in.FullName)
 	in.CRPNumber = strings.TrimSpace(in.CRPNumber)
-	in.CRPState = strings.ToUpper(strings.TrimSpace(in.CRPState))
+	in.CRPState = normalizeCRPRegion(in.CRPState)
 	in.Approach = strings.TrimSpace(in.Approach)
 	in.CPF = digitsOnly(in.CPF)
-	if in.Email == "" || len(in.Email) > 254 || in.FullName == "" || len(in.FullName) > 200 || in.CRPNumber == "" || in.CRPState == "" || len(in.Password) < 8 || len(in.Password) > 128 || !in.AcceptTerms || in.TermsVersion != signupTermsVersion {
-		return nil, ErrSignupInvalid
-	}
-	if len(in.CRPState) != 2 || len(in.CRPNumber) < 4 || len(in.CRPNumber) > 8 {
+	if !isValidSignupEmail(in.Email) || len(in.Email) > 254 || in.FullName == "" || len(in.FullName) > 200 || !isCRPNumber(in.CRPNumber) || !isValidCRPRegion(in.CRPState) || len(in.Password) < 8 || len(in.Password) > 128 || !in.AcceptTerms || !in.AcceptPrivacy || in.TermsVersion != signupTermsVersion || in.PrivacyVersion != signupTermsVersion {
 		return nil, ErrSignupInvalid
 	}
 	if in.CPF != "" && len(in.CPF) != 11 {
@@ -139,15 +150,17 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*SignupResult, er
 	orgID := uuid.New()
 	userID := uuid.New()
 	psyID := uuid.New()
-	_, err = tx.Exec(ctx, `
+	result, err := tx.Exec(ctx, `
 		INSERT INTO organization (id, name, slug, status)
 		VALUES ($1, $2, $3, 'active');
 		INSERT INTO "user" (id, organization_id, email, password_hash, role, status)
 		VALUES ($4, $1, $5, $6, 'psychologist', 'active');
 		INSERT INTO psychologist_profile (id, user_id, full_name, crp_number, crp_state, crp_status, approach, cpf_encrypted)
 		VALUES ($7, $4, $8, $9, $10, 'pending', NULLIF($11, ''), $12);
-		INSERT INTO consent (user_id, scope, document_version, ip_address)
-		VALUES ($4, 'psychologist_signup', $13, $14);`,
+		INSERT INTO consent (user_id, document_id, accepted, ip_address)
+		SELECT $4, d.id, true, $14
+		FROM consent_document d
+		WHERE d.scope IN ('terms_of_use', 'privacy_policy') AND d.version = $13;`,
 		orgID, "Clínica de "+in.FullName, "psicologo-"+orgID.String(), userID,
 		in.Email, hash, psyID, in.FullName, in.CRPNumber, in.CRPState, in.Approach,
 		cpf, signupTermsVersion, ipValue(in.IPAddress))
@@ -155,6 +168,9 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*SignupResult, er
 		if isSignupConflict(err) {
 			return nil, ErrSignupConflict
 		}
+		return nil, ErrSignupUnavailable
+	}
+	if result.RowsAffected() != 2 {
 		return nil, ErrSignupUnavailable
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -167,8 +183,39 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*SignupResult, er
 	return &SignupResult{
 		Token:          token,
 		User:           User{ID: userID, Email: in.Email, Role: "psychologist", OrganizationID: &orgID},
-		PsychologistID: psyID, CRPStatus: "pending", OnboardingStatus: "complete", TermsVersion: signupTermsVersion,
+		PsychologistID: psyID, CRPStatus: "pending", OnboardingStatus: "complete",
+		TermsVersion: signupTermsVersion, PrivacyVersion: signupTermsVersion,
 	}, nil
+}
+
+func normalizeCRPRegion(value string) string {
+	value = strings.ToUpper(strings.TrimSpace(value))
+	value = strings.TrimPrefix(value, "CRP-")
+	if len(value) == 1 && value[0] >= '0' && value[0] <= '9' {
+		value = "0" + value
+	}
+	return value
+}
+
+func isValidCRPRegion(value string) bool {
+	_, ok := validCRPRegions[value]
+	return ok
+}
+
+func isValidSignupEmail(value string) bool {
+	if !signupEmailPattern.MatchString(value) || strings.Contains(value, "..") {
+		return false
+	}
+	local := strings.SplitN(value, "@", 2)[0]
+	return !strings.HasPrefix(local, ".") && !strings.HasSuffix(local, ".")
+}
+
+func isCRPNumber(value string) bool {
+	if len(value) < 4 || len(value) > 8 {
+		return false
+	}
+	_, err := strconv.Atoi(value)
+	return err == nil
 }
 
 func digitsOnly(value string) string {

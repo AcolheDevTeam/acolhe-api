@@ -313,11 +313,12 @@ func (q *Queries) GetInvitationForPatient(ctx context.Context, arg GetInvitation
 }
 
 const getPatient = `-- name: GetPatient :one
-SELECT id, organization_id, full_name, email, birth_date, status, created_at
-FROM patient_profile
-WHERE id = $1
-  AND organization_id = $2
-  AND status <> 'deleted'
+SELECT p.id, p.organization_id, p.full_name, p.email, p.birth_date, p.status, p.created_at,
+       COALESCE((SELECT r.status FROM patient_relationship r WHERE r.patient_id = p.id ORDER BY r.created_at DESC LIMIT 1), 'pending')::text AS relationship_status
+FROM patient_profile p
+WHERE p.id = $1
+  AND p.organization_id = $2
+  AND p.status <> 'deleted'
 `
 
 type GetPatientParams struct {
@@ -326,13 +327,14 @@ type GetPatientParams struct {
 }
 
 type GetPatientRow struct {
-	ID             uuid.UUID   `json:"id"`
-	OrganizationID uuid.UUID   `json:"organization_id"`
-	FullName       string      `json:"full_name"`
-	Email          string      `json:"email"`
-	BirthDate      pgtype.Date `json:"birth_date"`
-	Status         string      `json:"status"`
-	CreatedAt      time.Time   `json:"created_at"`
+	ID                 uuid.UUID   `json:"id"`
+	OrganizationID     uuid.UUID   `json:"organization_id"`
+	FullName           string      `json:"full_name"`
+	Email              string      `json:"email"`
+	BirthDate          pgtype.Date `json:"birth_date"`
+	Status             string      `json:"status"`
+	CreatedAt          time.Time   `json:"created_at"`
+	RelationshipStatus string      `json:"relationship_status"`
 }
 
 func (q *Queries) GetPatient(ctx context.Context, arg GetPatientParams) (GetPatientRow, error) {
@@ -346,23 +348,26 @@ func (q *Queries) GetPatient(ctx context.Context, arg GetPatientParams) (GetPati
 		&i.BirthDate,
 		&i.Status,
 		&i.CreatedAt,
+		&i.RelationshipStatus,
 	)
 	return i, err
 }
 
 const listPatientsByOrg = `-- name: ListPatientsByOrg :many
-SELECT id, full_name, status, created_at
-FROM patient_profile
-WHERE organization_id = $1
-  AND status <> 'deleted'
-ORDER BY full_name
+SELECT p.id, p.full_name, p.status, p.created_at,
+       COALESCE((SELECT r.status FROM patient_relationship r WHERE r.patient_id = p.id ORDER BY r.created_at DESC LIMIT 1), 'pending')::text AS relationship_status
+FROM patient_profile p
+WHERE p.organization_id = $1
+  AND p.status <> 'deleted'
+ORDER BY p.full_name
 `
 
 type ListPatientsByOrgRow struct {
-	ID        uuid.UUID `json:"id"`
-	FullName  string    `json:"full_name"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+	ID                 uuid.UUID `json:"id"`
+	FullName           string    `json:"full_name"`
+	Status             string    `json:"status"`
+	CreatedAt          time.Time `json:"created_at"`
+	RelationshipStatus string    `json:"relationship_status"`
 }
 
 func (q *Queries) ListPatientsByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListPatientsByOrgRow, error) {
@@ -379,6 +384,7 @@ func (q *Queries) ListPatientsByOrg(ctx context.Context, organizationID uuid.UUI
 			&i.FullName,
 			&i.Status,
 			&i.CreatedAt,
+			&i.RelationshipStatus,
 		); err != nil {
 			return nil, err
 		}

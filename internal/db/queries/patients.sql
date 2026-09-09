@@ -1,16 +1,18 @@
 -- name: ListPatientsByOrg :many
-SELECT id, full_name, status, created_at
-FROM patient_profile
-WHERE organization_id = @organization_id
-  AND status <> 'deleted'
-ORDER BY full_name;
+SELECT p.id, p.full_name, p.status, p.created_at,
+       COALESCE((SELECT r.status FROM patient_relationship r WHERE r.patient_id = p.id ORDER BY r.created_at DESC LIMIT 1), 'pending')::text AS relationship_status
+FROM patient_profile p
+WHERE p.organization_id = @organization_id
+  AND p.status <> 'deleted'
+ORDER BY p.full_name;
 
 -- name: GetPatient :one
-SELECT id, organization_id, full_name, email, birth_date, status, created_at
-FROM patient_profile
-WHERE id = @id
-  AND organization_id = @organization_id
-  AND status <> 'deleted';
+SELECT p.id, p.organization_id, p.full_name, p.email, p.birth_date, p.status, p.created_at,
+       COALESCE((SELECT r.status FROM patient_relationship r WHERE r.patient_id = p.id ORDER BY r.created_at DESC LIMIT 1), 'pending')::text AS relationship_status
+FROM patient_profile p
+WHERE p.id = @id
+  AND p.organization_id = @organization_id
+  AND p.status <> 'deleted';
 
 -- name: CreatePatient :one
 INSERT INTO patient_profile (organization_id, full_name, email, birth_date)

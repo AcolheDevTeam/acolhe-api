@@ -65,11 +65,12 @@ func (s *Service) RequestExport(ctx context.Context, patientID uuid.UUID) error 
 
 // Patient é a projeção pública de um paciente.
 type Patient struct {
-	ID        uuid.UUID `json:"id"`
-	FullName  string    `json:"fullName"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
-	Email     string    `json:"email,omitempty"`
+	ID                 uuid.UUID `json:"id"`
+	FullName           string    `json:"fullName"`
+	Status             string    `json:"status"`
+	RelationshipStatus string    `json:"relationshipStatus"`
+	CreatedAt          time.Time `json:"createdAt"`
+	Email              string    `json:"email,omitempty"`
 }
 
 // List devolve os pacientes da organização do requisitante.
@@ -84,7 +85,7 @@ func (s *Service) List(ctx context.Context) ([]Patient, error) {
 	}
 	out := make([]Patient, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, Patient{ID: r.ID, FullName: r.FullName, Status: r.Status, CreatedAt: r.CreatedAt})
+		out = append(out, Patient{ID: r.ID, FullName: r.FullName, Status: r.Status, RelationshipStatus: r.RelationshipStatus, CreatedAt: r.CreatedAt})
 	}
 	return out, nil
 }
@@ -99,5 +100,5 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (*Patient, error) {
 	if err != nil {
 		return nil, ErrNotFound
 	}
-	return &Patient{ID: r.ID, FullName: r.FullName, Status: r.Status, CreatedAt: r.CreatedAt, Email: r.Email}, nil
+	return &Patient{ID: r.ID, FullName: r.FullName, Status: r.Status, RelationshipStatus: r.RelationshipStatus, CreatedAt: r.CreatedAt, Email: r.Email}, nil
 }

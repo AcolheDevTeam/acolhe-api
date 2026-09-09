@@ -61,16 +61,18 @@ type CheckinRequest struct {
 	Note *string `json:"note"`
 }
 
-func (s *Service) patientID(ctx context.Context) (uuid.UUID, error) {
+// requirePatient garante que o requisitante é um paciente com contexto de portal
+// resolvível; as queries patient-scoped usam o user_id do contexto, nunca um
+// patientId vindo do cliente.
+func (s *Service) requirePatient(ctx context.Context) error {
 	id, ok := tenant.FromContext(ctx)
 	if !ok || id.Role != "patient" {
-		return uuid.Nil, ErrPatientOnly
+		return ErrPatientOnly
 	}
-	row, err := tenant.Queries(ctx, s.q).GetPatientPortalContext(ctx, &id.UserID)
-	if err != nil {
-		return uuid.Nil, ErrPortalUnavailable
+	if _, err := tenant.Queries(ctx, s.q).GetPatientPortalContext(ctx, &id.UserID); err != nil {
+		return ErrPortalUnavailable
 	}
-	return row.ID, nil
+	return nil
 }
 
 func (s *Service) PortalContext(ctx context.Context) (*PortalContext, error) {
@@ -86,7 +88,7 @@ func (s *Service) PortalContext(ctx context.Context) (*PortalContext, error) {
 }
 
 func (s *Service) NextSession(ctx context.Context) (*NextSession, error) {
-	if _, err := s.patientID(ctx); err != nil {
+	if err := s.requirePatient(ctx); err != nil {
 		return nil, err
 	}
 	id, _ := tenant.FromContext(ctx)
@@ -101,7 +103,7 @@ func (s *Service) NextSession(ctx context.Context) (*NextSession, error) {
 }
 
 func (s *Service) PendingActivities(ctx context.Context) ([]PendingActivity, error) {
-	if _, err := s.patientID(ctx); err != nil {
+	if err := s.requirePatient(ctx); err != nil {
 		return nil, err
 	}
 	id, _ := tenant.FromContext(ctx)
@@ -117,7 +119,7 @@ func (s *Service) PendingActivities(ctx context.Context) ([]PendingActivity, err
 }
 
 func (s *Service) Checkins(ctx context.Context) ([]PatientCheckin, error) {
-	if _, err := s.patientID(ctx); err != nil {
+	if err := s.requirePatient(ctx); err != nil {
 		return nil, err
 	}
 	id, _ := tenant.FromContext(ctx)
@@ -136,7 +138,7 @@ func (s *Service) CreatePatientCheckin(ctx context.Context, req CheckinRequest) 
 	if req.Mood < 1 || req.Mood > 5 {
 		return nil, ErrInvalidMood
 	}
-	if _, err := s.patientID(ctx); err != nil {
+	if err := s.requirePatient(ctx); err != nil {
 		return nil, err
 	}
 	id, _ := tenant.FromContext(ctx)
@@ -151,7 +153,7 @@ func (s *Service) CreatePatientCheckin(ctx context.Context, req CheckinRequest) 
 }
 
 func (s *Service) ProcessSummary(ctx context.Context) (*ProcessSummary, error) {
-	if _, err := s.patientID(ctx); err != nil {
+	if err := s.requirePatient(ctx); err != nil {
 		return nil, err
 	}
 	id, _ := tenant.FromContext(ctx)

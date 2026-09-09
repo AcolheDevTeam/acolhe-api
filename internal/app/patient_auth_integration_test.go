@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/joycesilva/acolhe-api/internal/app"
@@ -89,6 +90,33 @@ func TestPatientInvitationLoginMeAndPortalIsolation(t *testing.T) {
 	portal := doJSON(t, srv.Client(), http.MethodGet, srv.URL+"/patient/context", loginResult.Token, nil)
 	require.Equal(t, http.StatusOK, portal.StatusCode)
 	portal.Body.Close()
+
+	// Every portal contract is patient-scoped from the JWT. Forged patient IDs
+	// in query/body input must not change the visible patient or write target.
+	for _, endpoint := range []string{
+		"/patient/context?patientId=" + uuid.NewString(),
+		"/patient/next-session?patientId=" + uuid.NewString(),
+		"/patient/pending-activities?patientId=" + uuid.NewString(),
+		"/patient/check-ins?patientId=" + uuid.NewString(),
+		"/patient/process-summary?patientId=" + uuid.NewString(),
+	} {
+		response := doJSON(t, srv.Client(), http.MethodGet, srv.URL+endpoint, loginResult.Token, nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, endpoint)
+		require.NoError(t, response.Body.Close())
+	}
+	forgedPatientID := uuid.New()
+	createdCheckin := doJSON(t, srv.Client(), http.MethodPost, srv.URL+"/patient/check-ins",
+		loginResult.Token, map[string]any{"mood": 4, "patientId": forgedPatientID})
+	require.Equal(t, http.StatusCreated, createdCheckin.StatusCode)
+	var checkinResult struct {
+		ID        uuid.UUID `json:"id"`
+		PatientID uuid.UUID `json:"patientId"`
+	}
+	require.NoError(t, json.NewDecoder(createdCheckin.Body).Decode(&checkinResult))
+	require.NoError(t, createdCheckin.Body.Close())
+	assert.Equal(t, patientID, checkinResult.PatientID,
+		"check-in deve usar o paciente do JWT, não um patientId informado")
+
 	denied := doJSON(t, srv.Client(), http.MethodGet, srv.URL+"/sessions?patientId="+uuid.NewString(), loginResult.Token, nil)
 	require.Equal(t, http.StatusForbidden, denied.StatusCode)
 	denied.Body.Close()

@@ -68,8 +68,6 @@ func (h *Handler) requestExport(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
 		case errors.Is(err, ErrPsychologistRequired):
 			return echo.NewHTTPError(http.StatusForbidden, err.Error())
-		case errors.Is(err, ErrInvitationRateLimited):
-			return echo.NewHTTPError(http.StatusTooManyRequests, "limite de reenvio atingido")
 		case errors.Is(err, ErrInvitationDelivery):
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "o e-mail não foi enviado")
 		default:
@@ -91,6 +89,8 @@ func (h *Handler) reissueInvitation(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusNotFound, "convite pendente não encontrado")
 		case errors.Is(err, ErrPsychologistRequired):
 			return echo.NewHTTPError(http.StatusForbidden, err.Error())
+		case errors.Is(err, ErrInvitationRateLimited):
+			return echo.NewHTTPError(http.StatusTooManyRequests, "limite de reenvio atingido")
 		default:
 			return echo.NewHTTPError(http.StatusInternalServerError, "falha ao gerar novo convite")
 		}

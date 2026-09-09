@@ -134,13 +134,13 @@ CREATE TABLE patient_invitation (
   token_digest       bytea UNIQUE NOT NULL,
   idempotency_key    uuid NOT NULL,
   created_by_user_id uuid NOT NULL REFERENCES "user"(id),
-   status             text NOT NULL DEFAULT 'pending'
-                        CHECK (status IN ('pending','accepted','declined','revoked','expired')),
-   delivery_status    text NOT NULL DEFAULT 'queued'
-                        CHECK (delivery_status IN ('queued','sending','sent','failed')),
-   delivery_attempts  integer NOT NULL DEFAULT 0 CHECK (delivery_attempts >= 0),
-   last_delivery_at   timestamptz,
-   expires_at         timestamptz NOT NULL,
+  status             text NOT NULL DEFAULT 'pending'
+                       CHECK (status IN ('pending','accepted','declined','revoked','expired')),
+  delivery_status    text NOT NULL DEFAULT 'queued'
+                       CHECK (delivery_status IN ('queued','sending','sent','failed')),
+  delivery_attempts  integer NOT NULL DEFAULT 0 CHECK (delivery_attempts >= 0),
+  last_delivery_at   timestamptz,
+  expires_at         timestamptz NOT NULL,
   accepted_at        timestamptz,
   declined_at        timestamptz,
   created_at         timestamptz NOT NULL DEFAULT now(),

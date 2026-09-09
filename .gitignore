@@ -3,6 +3,7 @@
 *.exe
 .env
 vendor/
+deploy/backups/
 
 # infra (Terraform/OCI) — segredos e estado nunca vão pro git
 infra/*.pem

@@ -1,17 +1,91 @@
+name: acolhe-dev
+
 services:
   postgres:
-    image: postgres:16
+    image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: acolhe
       POSTGRES_USER: acolhe
       POSTGRES_PASSWORD: acolhe
-    ports: ["5432:5432"]
+    ports:
+      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U acolhe -d acolhe"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
 
   redis:
-    image: redis:7
-    ports: ["6379:6379"]
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  migrate:
+    image: arigaio/atlas:0.31.0
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./internal/db/migrations:/migrations:ro
+    command:
+      - migrate
+      - apply
+      - --dir=file:///migrations
+      - --url=postgres://acolhe:acolhe@postgres:5432/acolhe?sslmode=disable
+
+  seed:
+    build:
+      context: .
+      target: development
+    restart: "no"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://acolhe:acolhe@postgres:5432/acolhe?sslmode=disable
+    volumes:
+      - .:/app
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    command: ["go", "run", "./cmd/seed"]
+
+  api:
+    build:
+      context: .
+      target: development
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgres://acolhe:acolhe@postgres:5432/acolhe?sslmode=disable
+      REDIS_ADDR: redis:6379
+      JWT_SECRET: dev-secret-troca-em-producao
+    ports:
+      - "8080:8080"
+    volumes:
+      - .:/app
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
 
 volumes:
   pgdata:
+  redisdata:
+  go-mod-cache:
+  go-build-cache:

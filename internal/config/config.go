@@ -17,6 +17,8 @@ type Config struct {
 	SMTPUsername   string
 	SMTPPassword   string
 	SMTPFrom       string
+	// FrontendURL é a origem pública do acolhe-web, usada em links enviados por e-mail.
+	FrontendURL string
 }
 
 func Load() Config {
@@ -35,6 +37,7 @@ func Load() Config {
 		SMTPUsername:   os.Getenv("SMTP_USERNAME"),
 		SMTPPassword:   os.Getenv("SMTP_PASSWORD"),
 		SMTPFrom:       os.Getenv("SMTP_FROM"),
+		FrontendURL:    env("FRONTEND_URL", "http://localhost:3000"),
 	}
 }
 

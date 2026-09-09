@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	db "github.com/joycesilva/acolhe-api/internal/db/generated"
+	"github.com/joycesilva/acolhe-api/internal/mailer"
 	taskqueue "github.com/joycesilva/acolhe-api/internal/queue"
 	"github.com/joycesilva/acolhe-api/internal/tasks"
 	"github.com/joycesilva/acolhe-api/internal/tenant"
@@ -33,12 +34,20 @@ var (
 )
 
 type Service struct {
-	q     db.Querier
-	queue taskqueue.Enqueuer
+	q           db.Querier
+	queue       taskqueue.Enqueuer
+	mailer      mailer.Mailer // nil = envio de convite desabilitado
+	frontendURL string
 }
 
-func NewService(q db.Querier, queue taskqueue.Enqueuer) *Service {
-	return &Service{q: q, queue: queue}
+// NewService monta o domínio de pacientes. Opções (ex.: WithInvitationMailer)
+// habilitam integrações sem obrigar os testes a configurá-las.
+func NewService(q db.Querier, queue taskqueue.Enqueuer, opts ...Option) *Service {
+	s := &Service{q: q, queue: queue}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // RequestExport enfileira a exportação LGPD dos dados de um paciente (SLA 24h).
@@ -102,6 +111,9 @@ type Invitation struct {
 	Token     string    `json:"token"`
 	Email     string    `json:"email"`
 	ExpiresAt time.Time `json:"expiresAt"`
+	// DeliveryStatus informa o resultado do e-mail: sent, failed ou disabled.
+	// O token é devolvido sempre, para o link copiável servir de fallback.
+	DeliveryStatus string `json:"deliveryStatus"`
 }
 
 // CreateRequest é o corpo de POST /patients.
@@ -173,8 +185,9 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Patient, erro
 		if err != nil {
 			return nil, err
 		}
-		return toPatient(row.ID, row.FullName, row.Status, row.RelationshipStatus, row.CreatedAt,
-			&Invitation{Token: token, Email: email, ExpiresAt: reissued.ExpiresAt}), nil
+		invitation := &Invitation{Token: token, Email: email, ExpiresAt: reissued.ExpiresAt}
+		s.deliverInvitation(ctx, row.ID, invitation, row.FullName, psy.FullName)
+		return toPatient(row.ID, row.FullName, row.Status, row.RelationshipStatus, row.CreatedAt, invitation), nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
@@ -211,8 +224,9 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Patient, erro
 	if err != nil {
 		return nil, err
 	}
-	return toPatient(row.ID, row.FullName, row.Status, row.RelationshipStatus, row.CreatedAt,
-		&Invitation{Token: token, Email: email, ExpiresAt: invitation.ExpiresAt}), nil
+	delivery := &Invitation{Token: token, Email: email, ExpiresAt: invitation.ExpiresAt}
+	s.deliverInvitation(ctx, row.ID, delivery, row.FullName, psy.FullName)
+	return toPatient(row.ID, row.FullName, row.Status, row.RelationshipStatus, row.CreatedAt, delivery), nil
 }
 
 // List devolve os pacientes da organização do requisitante.
@@ -298,7 +312,21 @@ func (s *Service) ReissueInvitation(ctx context.Context, patientID uuid.UUID) (*
 		return nil, err
 	}
 
-	return &Invitation{Token: token, Email: pending.Email, ExpiresAt: reissued.ExpiresAt}, nil
+	invitation := &Invitation{Token: token, Email: pending.Email, ExpiresAt: reissued.ExpiresAt}
+	if s.mailer == nil {
+		invitation.DeliveryStatus = DeliveryDisabled
+		return invitation, nil
+	}
+	// O nome só é necessário para o texto do e-mail; a consulta reaproveita o
+	// predicado de isolamento (org + psicóloga) e falha silenciosa vira saudação genérica.
+	patientName := ""
+	if row, err := q.GetPatientForPsychologist(ctx, db.GetPatientForPsychologistParams{
+		ID: patientID, OrganizationID: identity.OrgID, PsychologistID: psy.ID,
+	}); err == nil {
+		patientName = row.FullName
+	}
+	s.deliverInvitation(ctx, patientID, invitation, patientName, psy.FullName)
+	return invitation, nil
 }
 
 func newInvitationToken() (string, []byte, error) {

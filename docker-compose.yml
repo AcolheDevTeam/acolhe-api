@@ -72,6 +72,11 @@ services:
         condition: service_healthy
       seed:
         condition: service_completed_successfully
+    # Segredos locais opcionais (SMTP_*, FRONTEND_URL) vêm do .env, que está no
+    # .gitignore. As variáveis abaixo têm precedência sobre o arquivo.
+    env_file:
+      - path: .env
+        required: false
     environment:
       PORT: "8080"
       DATABASE_URL: postgres://acolhe:acolhe@postgres:5432/acolhe?sslmode=disable

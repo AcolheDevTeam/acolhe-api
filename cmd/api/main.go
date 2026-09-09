@@ -12,6 +12,7 @@ import (
 	"github.com/joycesilva/acolhe-api/internal/config"
 	"github.com/joycesilva/acolhe-api/internal/database"
 	db "github.com/joycesilva/acolhe-api/internal/db/generated"
+	"github.com/joycesilva/acolhe-api/internal/mailer"
 	"github.com/joycesilva/acolhe-api/internal/queue"
 )
 
@@ -30,7 +31,22 @@ func main() {
 	redis := queue.Connect(cfg.RedisAddr)
 	defer func() { _ = redis.Close() }()
 
-	application := app.New(pool, queries, redis, cfg.JWTSecret)
+	var appOptions []app.Option
+	if cfg.SMTPAddress != "" {
+		smtpMailer, err := mailer.NewSMTP(mailer.Config{
+			Address: cfg.SMTPAddress, Username: cfg.SMTPUsername,
+			Password: cfg.SMTPPassword, From: cfg.SMTPFrom,
+		})
+		if err != nil {
+			log.Fatalf("smtp: %v", err)
+		}
+		appOptions = append(appOptions, app.WithInvitationMailer(smtpMailer, cfg.FrontendURL))
+		log.Printf("convites por e-mail habilitados via %s (links em %s)", cfg.SMTPAddress, cfg.FrontendURL)
+	} else {
+		log.Printf("SMTP_ADDRESS não configurado: convites ficam apenas com link copiável")
+	}
+
+	application := app.New(pool, queries, redis, cfg.JWTSecret, appOptions...)
 
 	go func() {
 		log.Printf("acolhe-api ouvindo em :%s", cfg.Port)

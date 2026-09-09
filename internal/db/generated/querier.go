@@ -11,6 +11,9 @@ import (
 )
 
 type Querier interface {
+	AcceptInvitation(ctx context.Context, id uuid.UUID) error
+	ActivatePatientRelationship(ctx context.Context, patientID uuid.UUID) error
+	AttachPatientUser(ctx context.Context, arg AttachPatientUserParams) error
 	// Conta agendamentos do psicólogo cujo intervalo se sobrepõe à janela informada.
 	// tstzrange(...) && tstzrange(...) testa interseção de intervalos.
 	// O service calcula window_end = scheduled_for + duration; assim a query só recebe timestamptz.
@@ -23,6 +26,7 @@ type Querier interface {
 	CreateInvitation(ctx context.Context, arg CreateInvitationParams) (CreateInvitationRow, error)
 	CreatePatient(ctx context.Context, arg CreatePatientParams) (CreatePatientRow, error)
 	CreatePatientRelationship(ctx context.Context, arg CreatePatientRelationshipParams) error
+	CreatePatientUser(ctx context.Context, arg CreatePatientUserParams) (uuid.UUID, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (CreateSessionRow, error)
 	// patient_relationship não tem organization_id; o isolamento de org é feito
 	// pelo join em patient_profile (que carrega organization_id).

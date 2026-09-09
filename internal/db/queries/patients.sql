@@ -54,3 +54,20 @@ UPDATE patient_invitation SET delivery_status = 'failed', delivery_attempts = de
 SELECT id, patient_id, organization_id, email, token_hash, token_ciphertext, expires_at,
        status, delivery_status, delivery_attempts, last_delivery_error, sent_at
 FROM patient_invitation WHERE token_hash = @token_hash;
+
+-- name: AcceptInvitation :exec
+UPDATE patient_invitation SET status = 'accepted', updated_at = now()
+WHERE id = @id AND status = 'pending';
+
+-- name: AttachPatientUser :exec
+UPDATE patient_profile SET user_id = @user_id, status = 'active', updated_at = now()
+WHERE id = @patient_id;
+
+-- name: ActivatePatientRelationship :exec
+UPDATE patient_relationship SET status = 'active'
+WHERE patient_id = @patient_id AND status = 'pending';
+
+-- name: CreatePatientUser :one
+INSERT INTO "user" (organization_id, email, password_hash, role)
+VALUES (@organization_id, @email, @password_hash, 'patient')
+RETURNING id;

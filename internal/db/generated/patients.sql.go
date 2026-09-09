@@ -13,6 +13,41 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const acceptInvitation = `-- name: AcceptInvitation :exec
+UPDATE patient_invitation SET status = 'accepted', updated_at = now()
+WHERE id = $1 AND status = 'pending'
+`
+
+func (q *Queries) AcceptInvitation(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, acceptInvitation, id)
+	return err
+}
+
+const activatePatientRelationship = `-- name: ActivatePatientRelationship :exec
+UPDATE patient_relationship SET status = 'active'
+WHERE patient_id = $1 AND status = 'pending'
+`
+
+func (q *Queries) ActivatePatientRelationship(ctx context.Context, patientID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, activatePatientRelationship, patientID)
+	return err
+}
+
+const attachPatientUser = `-- name: AttachPatientUser :exec
+UPDATE patient_profile SET user_id = $1, status = 'active', updated_at = now()
+WHERE id = $2
+`
+
+type AttachPatientUserParams struct {
+	UserID    *uuid.UUID `json:"user_id"`
+	PatientID uuid.UUID  `json:"patient_id"`
+}
+
+func (q *Queries) AttachPatientUser(ctx context.Context, arg AttachPatientUserParams) error {
+	_, err := q.db.Exec(ctx, attachPatientUser, arg.UserID, arg.PatientID)
+	return err
+}
+
 const createInvitation = `-- name: CreateInvitation :one
 INSERT INTO patient_invitation (patient_id, organization_id, email, token_hash, token_ciphertext, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6)
@@ -127,6 +162,25 @@ type CreatePatientRelationshipParams struct {
 func (q *Queries) CreatePatientRelationship(ctx context.Context, arg CreatePatientRelationshipParams) error {
 	_, err := q.db.Exec(ctx, createPatientRelationship, arg.PatientID, arg.PsychologistID)
 	return err
+}
+
+const createPatientUser = `-- name: CreatePatientUser :one
+INSERT INTO "user" (organization_id, email, password_hash, role)
+VALUES ($1, $2, $3, 'patient')
+RETURNING id
+`
+
+type CreatePatientUserParams struct {
+	OrganizationID *uuid.UUID `json:"organization_id"`
+	Email          string     `json:"email"`
+	PasswordHash   string     `json:"password_hash"`
+}
+
+func (q *Queries) CreatePatientUser(ctx context.Context, arg CreatePatientUserParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createPatientUser, arg.OrganizationID, arg.Email, arg.PasswordHash)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getInvitationByID = `-- name: GetInvitationByID :one

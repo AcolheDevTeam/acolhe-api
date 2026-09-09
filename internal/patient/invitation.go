@@ -16,6 +16,7 @@ import (
 	"github.com/joycesilva/acolhe-api/internal/invitation"
 	"github.com/joycesilva/acolhe-api/internal/tasks"
 	"github.com/joycesilva/acolhe-api/internal/tenant"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const invitationTTL = 72 * time.Hour
@@ -142,6 +143,29 @@ func (s *Service) Validate(ctx context.Context, raw string) (InvitationStatus, e
 		status = "expired"
 	}
 	return InvitationStatus{ID: row.ID, Status: status, DeliveryStatus: row.DeliveryStatus, ExpiresAt: row.ExpiresAt}, nil
+}
+
+func (s *Service) Accept(ctx context.Context, raw, password string) error {
+	h := sha256.Sum256([]byte(raw))
+	row, err := s.q.GetInvitationByTokenHash(ctx, h[:])
+	if err != nil || row.Status != "pending" || time.Now().After(row.ExpiresAt) {
+		return ErrInviteNotFound
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	userID, err := s.q.CreatePatientUser(ctx, db.CreatePatientUserParams{OrganizationID: &row.OrganizationID, Email: row.Email, PasswordHash: string(hash)})
+	if err != nil {
+		return err
+	}
+	if err = s.q.AttachPatientUser(ctx, db.AttachPatientUserParams{PatientID: row.PatientID, UserID: &userID}); err != nil {
+		return err
+	}
+	if err = s.q.ActivatePatientRelationship(ctx, row.PatientID); err != nil {
+		return err
+	}
+	return s.q.AcceptInvitation(ctx, row.ID)
 }
 
 func (s *Service) link(token string) string {

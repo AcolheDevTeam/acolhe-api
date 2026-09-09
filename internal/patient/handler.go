@@ -25,6 +25,7 @@ func (h *Handler) Register(e *echo.Echo) {
 	g.POST("/:id/invitation", h.resend)
 	g.POST("/:id/export", h.requestExport)
 	e.GET("/invites/:token", h.validate)
+	e.POST("/invites/:token/accept", h.accept)
 }
 
 func (h *Handler) requestExport(c echo.Context) error {
@@ -104,4 +105,17 @@ func (h *Handler) validate(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "convite inválido ou expirado")
 	}
 	return c.JSON(http.StatusOK, status)
+}
+
+func (h *Handler) accept(c echo.Context) error {
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(c.Request().Body).Decode(&req); err != nil || len(req.Password) < 8 {
+		return echo.NewHTTPError(http.StatusBadRequest, "senha inválida")
+	}
+	if err := h.svc.Accept(c.Request().Context(), c.Param("token"), req.Password); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "convite inválido, expirado ou já utilizado")
+	}
+	return c.NoContent(http.StatusNoContent)
 }

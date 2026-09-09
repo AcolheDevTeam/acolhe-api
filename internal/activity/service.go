@@ -129,12 +129,17 @@ func (s *Service) ListResponses(ctx context.Context, assignmentID uuid.UUID) ([]
 
 // Template é a projeção pública de um template de atividade.
 type Template struct {
-	ID          uuid.UUID `json:"id"`
-	Title       string    `json:"title"`
-	Type        string    `json:"type"`
-	Description *string   `json:"description"`
-	Version     int32     `json:"version"`
-	CreatedAt   time.Time `json:"createdAt"`
+	ID           uuid.UUID `json:"id"`
+	Title        string    `json:"title"`
+	Type         string    `json:"type"`
+	Description  *string   `json:"description"`
+	Instructions *string   `json:"instructions"`
+	Version      int32     `json:"version"`
+	IsGlobal     bool      `json:"isGlobal"`
+	OwnedByMe    bool      `json:"ownedByMe"`
+	FieldCount   int32     `json:"fieldCount"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 // Assignment é a projeção pública de uma atribuição de atividade.
@@ -243,19 +248,32 @@ func (s *Service) Assign(ctx context.Context, req AssignRequest) (*Assignment, e
 	}, nil
 }
 
-// ListTemplates devolve os templates visíveis à organização (+ globais).
+// ListTemplates devolve a biblioteca visível à organização (+ globais): só a
+// versão mais recente de cada linhagem e sem arquivados.
 func (s *Service) ListTemplates(ctx context.Context) ([]Template, error) {
-	orgID, err := tenant.OrgID(ctx)
-	if err != nil {
-		return nil, err
+	id, ok := tenant.FromContext(ctx)
+	if !ok {
+		return nil, tenant.ErrNoTenant
 	}
-	rows, err := tenant.Queries(ctx, s.q).ListActivityTemplates(ctx, &orgID)
+	q := tenant.Queries(ctx, s.q)
+	var psyID uuid.UUID
+	if id.Role == "psychologist" {
+		if psy, err := q.GetPsychologistByUser(ctx, id.UserID); err == nil {
+			psyID = psy.ID
+		}
+	}
+	rows, err := q.ListActivityTemplates(ctx, &id.OrgID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Template, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, Template{ID: r.ID, Title: r.Title, Type: r.Type, Description: r.Description, Version: r.Version, CreatedAt: r.CreatedAt})
+		out = append(out, Template{
+			ID: r.ID, Title: r.Title, Type: r.Type, Description: r.Description,
+			Instructions: r.Instructions, Version: r.Version, IsGlobal: r.IsGlobal,
+			OwnedByMe:  !r.IsGlobal && psyID != uuid.Nil && r.AuthorID == psyID,
+			FieldCount: r.FieldCount, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		})
 	}
 	return out, nil
 }

@@ -19,6 +19,10 @@ func NewHandler(svc *Service) *Handler {
 func (h *Handler) Register(e *echo.Echo) {
 	g := e.Group("/activities")
 	g.GET("/templates", h.listTemplates)
+	g.POST("/templates", h.createTemplate)
+	g.GET("/templates/:id", h.getTemplate)
+	g.PUT("/templates/:id", h.updateTemplate)
+	g.POST("/templates/:id/archive", h.archiveTemplate)
 	g.GET("", h.list)
 	g.POST("", h.assign)
 	g.GET("/:id", h.get)
@@ -168,4 +172,75 @@ func (h *Handler) listAssignments(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "erro ao listar atribuições")
 	}
 	return c.JSON(http.StatusOK, assignments)
+}
+
+// --- Biblioteca de templates (ACO-66) ---
+
+func (h *Handler) createTemplate(c echo.Context) error {
+	var req TemplateRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "corpo inválido")
+	}
+	t, err := h.svc.CreateTemplate(c.Request().Context(), req)
+	if err != nil {
+		return templateError(err, "falha ao criar template")
+	}
+	return c.JSON(http.StatusCreated, t)
+}
+
+func (h *Handler) getTemplate(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "id inválido")
+	}
+	t, err := h.svc.GetTemplate(c.Request().Context(), id)
+	if err != nil {
+		return templateError(err, "erro ao buscar template")
+	}
+	return c.JSON(http.StatusOK, t)
+}
+
+func (h *Handler) updateTemplate(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "id inválido")
+	}
+	var req TemplateRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "corpo inválido")
+	}
+	t, err := h.svc.UpdateTemplate(c.Request().Context(), id, req)
+	if err != nil {
+		return templateError(err, "falha ao atualizar template")
+	}
+	return c.JSON(http.StatusOK, t)
+}
+
+func (h *Handler) archiveTemplate(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "id inválido")
+	}
+	t, err := h.svc.ArchiveTemplate(c.Request().Context(), id)
+	if err != nil {
+		return templateError(err, "falha ao arquivar template")
+	}
+	return c.JSON(http.StatusOK, t)
+}
+
+// templateError traduz os erros de domínio da biblioteca em status HTTP. As
+// mensagens de validação (400) são específicas e vão direto para o usuário.
+func templateError(err error, fallback string) error {
+	switch {
+	case errors.Is(err, ErrInvalidTemplate):
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrPsychologistRequired), errors.Is(err, ErrTemplateReadOnly):
+		return echo.NewHTTPError(http.StatusForbidden, err.Error())
+	case errors.Is(err, ErrTemplateNotFound):
+		return echo.NewHTTPError(http.StatusNotFound, err.Error())
+	case errors.Is(err, ErrTemplateArchived), errors.Is(err, ErrTemplateSuperseded):
+		return echo.NewHTTPError(http.StatusConflict, err.Error())
+	default:
+		return echo.NewHTTPError(http.StatusInternalServerError, fallback)
+	}
 }

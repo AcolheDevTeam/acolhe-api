@@ -90,16 +90,54 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # domínio do Caddy derivado do IP da VM (nip.io) — sem precisar de domínio próprio.
           CADDY_DOMAIN: ${{ secrets.SSH_HOST }}.nip.io
+          # E-mail transacional (convites) e origem do frontend: vêm do Environment do
+          # GitHub e são gravados no .env da VM a cada deploy (só quando preenchidos).
+          SMTP_ADDRESS: ${{ secrets.SMTP_ADDRESS }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          FRONTEND_URL: ${{ vars.FRONTEND_URL }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          envs: GHCR_USER,GHCR_TOKEN,CADDY_DOMAIN
+          envs: GHCR_USER,GHCR_TOKEN,CADDY_DOMAIN,SMTP_ADDRESS,SMTP_USERNAME,SMTP_PASSWORD,SMTP_FROM,FRONTEND_URL
           script: |
             set -euo pipefail
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             cd /home/ubuntu/acolhe
             export CADDY_DOMAIN
+
+            # Atualiza (ou acrescenta) uma chave no .env sem tocar nas demais.
+            upsert_env() {
+              local key="$1" value="$2"
+              [ -z "$value" ] && return 0
+              if grep -q "^${key}=" .env 2>/dev/null; then
+                sed -i "s|^${key}=.*|${key}=${value}|" .env
+              else
+                printf '%s=%s\n' "$key" "$value" >> .env
+              fi
+            }
+            upsert_env SMTP_ADDRESS "$SMTP_ADDRESS"
+            upsert_env SMTP_USERNAME "$SMTP_USERNAME"
+            upsert_env SMTP_PASSWORD "$SMTP_PASSWORD"
+            upsert_env SMTP_FROM "$SMTP_FROM"
+            upsert_env FRONTEND_URL "$FRONTEND_URL"
+
+            # Role de aplicação do Postgres (RLS sem BYPASSRLS). VMs criadas antes
+            # dessa mudança não têm as chaves: gera a senha na própria VM e deriva
+            # APP_DATABASE_URL da DATABASE_URL existente. Nunca sobrescreve valores.
+            if ! grep -q '^POSTGRES_APP_PASSWORD=' .env; then
+              printf 'POSTGRES_APP_PASSWORD=%s\n' "$(openssl rand -hex 24)" >> .env
+            fi
+            if ! grep -q '^APP_DATABASE_URL=' .env; then
+              app_pw="$(grep '^POSTGRES_APP_PASSWORD=' .env | cut -d= -f2-)"
+              db_url="$(grep '^DATABASE_URL=' .env | cut -d= -f2-)"
+              app_url="$(printf '%s' "$db_url" | sed -E "s#^(postgres(ql)?://)[^@]*@#\\1acolhe_app:${app_pw}@#")"
+              printf 'APP_DATABASE_URL=%s\n' "$app_url" >> .env
+            fi
+            chmod 600 .env
+
             docker compose --env-file .env pull
             docker compose --env-file .env up -d --remove-orphans
             docker logout ghcr.io

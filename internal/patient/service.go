@@ -30,15 +30,17 @@ var (
 	ErrInvalidInput = errors.New("dados do paciente inválidos")
 	// ErrPsychologistRequired indica que apenas psicólogos podem cadastrar pacientes.
 	ErrPsychologistRequired = errors.New("perfil de psicólogo obrigatório")
+	ErrInvitationDelivery   = errors.New("falha na entrega do convite")
 )
 
 type Service struct {
-	q     db.Querier
-	queue taskqueue.Enqueuer
+	q      db.Querier
+	queue  taskqueue.Enqueuer
+	mailer InvitationMailer
 }
 
 func NewService(q db.Querier, queue taskqueue.Enqueuer) *Service {
-	return &Service{q: q, queue: queue}
+	return &Service{q: q, queue: queue, mailer: defaultInvitationMailer()}
 }
 
 // RequestExport enfileira a exportação LGPD dos dados de um paciente (SLA 24h).
@@ -99,9 +101,11 @@ type Patient struct {
 // Invitation is returned only when a psychologist creates or deliberately
 // reissues a patient invitation. The opaque token is never persisted.
 type Invitation struct {
-	Token     string    `json:"token"`
-	Email     string    `json:"email"`
-	ExpiresAt time.Time `json:"expiresAt"`
+	ID             uuid.UUID `json:"id"`
+	Token          string    `json:"token"`
+	Email          string    `json:"email"`
+	ExpiresAt      time.Time `json:"expiresAt"`
+	DeliveryStatus string    `json:"deliveryStatus"`
 }
 
 // CreateRequest é o corpo de POST /patients.
@@ -173,8 +177,11 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Patient, erro
 		if err != nil {
 			return nil, err
 		}
-		return toPatient(row.ID, row.FullName, row.Status, row.RelationshipStatus, row.CreatedAt,
-			&Invitation{Token: token, Email: email, ExpiresAt: reissued.ExpiresAt}), nil
+		invitation := &Invitation{ID: reissued.ID, Token: token, Email: email, ExpiresAt: reissued.ExpiresAt}
+		if err := s.deliverInvitation(invitation, row.FullName); err != nil {
+			return nil, err
+		}
+		return toPatient(row.ID, row.FullName, row.Status, row.RelationshipStatus, row.CreatedAt, invitation), nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
@@ -211,8 +218,24 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Patient, erro
 	if err != nil {
 		return nil, err
 	}
-	return toPatient(row.ID, row.FullName, row.Status, row.RelationshipStatus, row.CreatedAt,
-		&Invitation{Token: token, Email: email, ExpiresAt: invitation.ExpiresAt}), nil
+	delivery := &Invitation{ID: invitation.ID, Token: token, Email: email, ExpiresAt: invitation.ExpiresAt}
+	if err := s.deliverInvitation(delivery, row.FullName); err != nil {
+		return nil, err
+	}
+	return toPatient(row.ID, row.FullName, row.Status, row.RelationshipStatus, row.CreatedAt, delivery), nil
+}
+
+func (s *Service) deliverInvitation(invitation *Invitation, patientName string) error {
+	if s.mailer == nil {
+		return ErrInvitationDelivery
+	}
+	link := strings.TrimRight(env("FRONTEND_URL", "http://localhost:3000"), "/") + "/invite/" + invitation.Token
+	body := "Olá, " + patientName + ". Você recebeu um convite para acessar o Acolhe. Este link é válido até " + invitation.ExpiresAt.Format(time.RFC3339) + ":\n\n" + link
+	if err := s.mailer.Send(invitation.Email, "Seu convite para o Acolhe", body); err != nil {
+		return ErrInvitationDelivery
+	}
+	invitation.DeliveryStatus = "sent"
+	return nil
 }
 
 // List devolve os pacientes da organização do requisitante.

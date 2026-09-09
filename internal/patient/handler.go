@@ -46,6 +46,8 @@ func (h *Handler) create(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		case errors.Is(err, ErrPsychologistRequired):
 			return echo.NewHTTPError(http.StatusForbidden, err.Error())
+		case errors.Is(err, ErrInvitationDelivery):
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "convite criado, mas o e-mail não foi enviado")
 		default:
 			return echo.NewHTTPError(http.StatusInternalServerError, "falha ao criar paciente")
 		}
@@ -66,6 +68,8 @@ func (h *Handler) requestExport(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
 		case errors.Is(err, ErrPsychologistRequired):
 			return echo.NewHTTPError(http.StatusForbidden, err.Error())
+		case errors.Is(err, ErrInvitationDelivery):
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "o e-mail não foi enviado")
 		default:
 			return echo.NewHTTPError(http.StatusInternalServerError, "falha ao solicitar exportação")
 		}

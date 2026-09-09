@@ -20,6 +20,12 @@ FROM appointment a
 JOIN patient_profile p ON p.id = a.patient_id
 WHERE p.user_id = @user_id
   AND p.status <> 'deleted'
+  AND EXISTS (
+    SELECT 1 FROM patient_relationship r
+    WHERE r.patient_id = p.id
+      AND r.status = 'active'
+      AND r.consent_id IS NOT NULL
+  )
   AND a.status = 'scheduled'
   AND a.scheduled_for >= now()
 ORDER BY a.scheduled_for
@@ -32,6 +38,12 @@ JOIN patient_profile p ON p.id = ag.patient_id
 JOIN activity_template t ON t.id = ag.template_id
 WHERE p.user_id = @user_id
   AND p.status <> 'deleted'
+  AND EXISTS (
+    SELECT 1 FROM patient_relationship r
+    WHERE r.patient_id = p.id
+      AND r.status = 'active'
+      AND r.consent_id IS NOT NULL
+  )
   AND ag.status IN ('pending', 'in_progress')
 ORDER BY COALESCE(ag.due_at, ag.scheduled_for, ag.created_at);
 
@@ -41,6 +53,12 @@ FROM checkin c
 JOIN patient_profile p ON p.id = c.patient_id
 WHERE p.user_id = @user_id
   AND p.status <> 'deleted'
+  AND EXISTS (
+    SELECT 1 FROM patient_relationship r
+    WHERE r.patient_id = p.id
+      AND r.status = 'active'
+      AND r.consent_id IS NOT NULL
+  )
 ORDER BY c.created_at DESC
 LIMIT 10;
 
@@ -65,4 +83,10 @@ LEFT JOIN session s ON s.patient_id = p.id
 LEFT JOIN activity_assignment ag ON ag.patient_id = p.id
 LEFT JOIN checkin c ON c.patient_id = p.id
 WHERE p.user_id = @user_id
-  AND p.status <> 'deleted';
+  AND p.status <> 'deleted'
+  AND EXISTS (
+    SELECT 1 FROM patient_relationship r
+    WHERE r.patient_id = p.id
+      AND r.status = 'active'
+      AND r.consent_id IS NOT NULL
+  );

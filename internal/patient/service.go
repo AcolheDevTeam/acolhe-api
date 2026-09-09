@@ -231,11 +231,13 @@ func (s *Service) deliverInvitation(invitation *Invitation, patientName string) 
 	}
 	link := strings.TrimRight(env("FRONTEND_URL", "http://localhost:3000"), "/") + "/invite/" + invitation.Token
 	body := "Olá, " + patientName + ". Você recebeu um convite para acessar o Acolhe. Este link é válido até " + invitation.ExpiresAt.Format(time.RFC3339) + ":\n\n" + link
-	if err := s.mailer.Send(invitation.Email, "Seu convite para o Acolhe", body); err != nil {
-		return ErrInvitationDelivery
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := s.mailer.Send(invitation.Email, "Seu convite para o Acolhe", body); err == nil {
+			invitation.DeliveryStatus = "sent"
+			return nil
+		}
 	}
-	invitation.DeliveryStatus = "sent"
-	return nil
+	return ErrInvitationDelivery
 }
 
 // List devolve os pacientes da organização do requisitante.

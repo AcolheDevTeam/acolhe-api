@@ -118,6 +118,7 @@ func (q *Queries) GetPatientPortalContext(ctx context.Context, userID *uuid.UUID
 		&i.Status,
 		&i.OrganizationID,
 		&i.RelationshipID,
+		&i.RelationshipStatus,
 		&i.Consented,
 	)
 	return i, err

@@ -20,13 +20,18 @@ type Querier interface {
 	// Isolamento de org garantido pela checagem do paciente na mesma org (no service).
 	CreateCheckin(ctx context.Context, arg CreateCheckinParams) (Checkin, error)
 	CreateDocument(ctx context.Context, arg CreateDocumentParams) (CreateDocumentRow, error)
+	CreateInvitation(ctx context.Context, arg CreateInvitationParams) (CreateInvitationRow, error)
 	CreatePatient(ctx context.Context, arg CreatePatientParams) (CreatePatientRow, error)
+	CreatePatientRelationship(ctx context.Context, arg CreatePatientRelationshipParams) error
 	CreateSession(ctx context.Context, arg CreateSessionParams) (CreateSessionRow, error)
 	// patient_relationship não tem organization_id; o isolamento de org é feito
 	// pelo join em patient_profile (que carrega organization_id).
 	GetActiveRelationship(ctx context.Context, arg GetActiveRelationshipParams) (GetActiveRelationshipRow, error)
 	// Confirma que o assignment existe e pertence à organização (via paciente).
 	GetAssignmentInOrg(ctx context.Context, arg GetAssignmentInOrgParams) (GetAssignmentInOrgRow, error)
+	GetInvitationByID(ctx context.Context, id uuid.UUID) (GetInvitationByIDRow, error)
+	GetInvitationByTokenHash(ctx context.Context, tokenHash []byte) (GetInvitationByTokenHashRow, error)
+	GetInvitationForPatient(ctx context.Context, arg GetInvitationForPatientParams) (GetInvitationForPatientRow, error)
 	GetPatient(ctx context.Context, arg GetPatientParams) (GetPatientRow, error)
 	// Timeline unificada do paciente: sessões + agendamentos + atividades.
 	// Isolamento multi-tenant via patient_profile.organization_id em cada ramo do UNION.
@@ -47,8 +52,11 @@ type Querier interface {
 	ListPatientsByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListPatientsByOrgRow, error)
 	ListResponsesByAssignment(ctx context.Context, assignmentID uuid.UUID) ([]ListResponsesByAssignmentRow, error)
 	MarkAssignmentSubmitted(ctx context.Context, id uuid.UUID) error
+	MarkInvitationFailed(ctx context.Context, arg MarkInvitationFailedParams) error
+	MarkInvitationSent(ctx context.Context, id uuid.UUID) error
 	// Confirma que o paciente pertence à organização (usado antes de criar check-in).
 	PatientInOrg(ctx context.Context, arg PatientInOrgParams) (bool, error)
+	RevokePendingInvitations(ctx context.Context, arg RevokePendingInvitationsParams) error
 	// Cria (submete) a resposta de uma atividade e marca o assignment como submitted.
 	SubmitResponse(ctx context.Context, arg SubmitResponseParams) (SubmitResponseRow, error)
 	WriteAuditLog(ctx context.Context, arg WriteAuditLogParams) error

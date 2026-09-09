@@ -14,16 +14,18 @@ import (
 	"github.com/hibiken/asynq"
 
 	db "github.com/joycesilva/acolhe-api/internal/db/generated"
+	"github.com/joycesilva/acolhe-api/internal/patient"
 	"github.com/joycesilva/acolhe-api/internal/tasks"
 )
 
 // Workers agrupa os handlers e suas dependências (acesso a dados).
 type Workers struct {
-	q db.Querier
+	q           db.Querier
+	invitations *patient.Service
 }
 
 func New(q db.Querier) *Workers {
-	return &Workers{q: q}
+	return &Workers{q: q, invitations: patient.NewService(q, nil)}
 }
 
 // Register pendura todos os handlers no mux do asynq.
@@ -31,6 +33,21 @@ func (w *Workers) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(tasks.TypeLGPDExport, w.HandleLGPDExport)
 	mux.HandleFunc(tasks.TypeReminder, w.HandleReminder)
 	mux.HandleFunc(tasks.TypePDF, w.HandlePDF)
+	mux.HandleFunc(tasks.TypeInvitationEmail, w.HandleInvitationEmail)
+}
+
+func (w *Workers) HandleInvitationEmail(ctx context.Context, t *asynq.Task) error {
+	var p tasks.InvitationEmailPayload
+	if err := json.Unmarshal(t.Payload(), &p); err != nil {
+		return err
+	}
+	if err := w.invitations.Delivery(ctx, p.InvitationID); err != nil {
+		// The task payload contains only an opaque database identifier. Provider
+		// errors are returned to asynq for bounded retry and contain no token.
+		log.Printf("[patient:invitation_email] delivery failed for invitation %s: %v", p.InvitationID, err)
+		return err
+	}
+	return nil
 }
 
 // HandleLGPDExport: reúne os dados do paciente, gera PDF + JSON, sobe para o S3,

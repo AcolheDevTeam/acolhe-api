@@ -64,12 +64,30 @@ CREATE TABLE patient_profile (
   user_id         uuid REFERENCES "user"(id),   -- nulo até aceitar convite
   organization_id uuid NOT NULL REFERENCES organization(id),
   full_name       text NOT NULL,
+  email           text NOT NULL,
   cpf_encrypted   bytea,
   birth_date      date,
   status          text NOT NULL DEFAULT 'active',
   deleted_at      timestamptz,
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE patient_invitation (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id          uuid NOT NULL REFERENCES patient_profile(id),
+  organization_id     uuid NOT NULL REFERENCES organization(id),
+  email               text NOT NULL,
+  token_hash          bytea NOT NULL UNIQUE,
+  token_ciphertext    bytea NOT NULL,
+  expires_at          timestamptz NOT NULL,
+  status              text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','expired','revoked')),
+  delivery_status     text NOT NULL DEFAULT 'queued' CHECK (delivery_status IN ('queued','sending','sent','failed')),
+  delivery_attempts   integer NOT NULL DEFAULT 0,
+  last_delivery_error text,
+  sent_at             timestamptz,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE consent (
@@ -353,6 +371,8 @@ CREATE INDEX idx_psychologist_user ON psychologist_profile (user_id);
 CREATE INDEX idx_patient_organization ON patient_profile (organization_id);
 CREATE INDEX idx_patient_user ON patient_profile (user_id);
 CREATE INDEX idx_patient_status ON patient_profile (organization_id, status);
+CREATE INDEX idx_patient_invitation_patient ON patient_invitation (patient_id, created_at DESC);
+CREATE INDEX idx_patient_invitation_org ON patient_invitation (organization_id, created_at DESC);
 
 CREATE INDEX idx_relationship_patient ON patient_relationship (patient_id);
 CREATE INDEX idx_relationship_psychologist ON patient_relationship (psychologist_id);

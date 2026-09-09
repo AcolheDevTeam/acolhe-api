@@ -22,12 +22,20 @@ var (
 )
 
 type Service struct {
-	q     db.Querier
-	queue *asynq.Client
+	q           db.Querier
+	queue       *asynq.Client
+	mailer      EmailSender
+	frontendURL string
+	tokenKey    string
+	rate        *resendLimiter
 }
 
 func NewService(q db.Querier, queue *asynq.Client) *Service {
-	return &Service{q: q, queue: queue}
+	return NewServiceWithDeps(q, queue, defaultMailer(), envOr("FRONTEND_URL", "http://localhost:3000"), envOr("INVITATION_TOKEN_KEY", "dev-invitation-key"))
+}
+
+func NewServiceWithDeps(q db.Querier, queue *asynq.Client, mailer EmailSender, frontendURL, tokenKey string) *Service {
+	return &Service{q: q, queue: queue, mailer: mailer, frontendURL: frontendURL, tokenKey: tokenKey}
 }
 
 // RequestExport enfileira a exportação LGPD dos dados de um paciente (SLA 24h).
@@ -61,6 +69,7 @@ type Patient struct {
 	FullName  string    `json:"fullName"`
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"createdAt"`
+	Email     string    `json:"email,omitempty"`
 }
 
 // List devolve os pacientes da organização do requisitante.
@@ -90,5 +99,5 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (*Patient, error) {
 	if err != nil {
 		return nil, ErrNotFound
 	}
-	return &Patient{ID: r.ID, FullName: r.FullName, Status: r.Status, CreatedAt: r.CreatedAt}, nil
+	return &Patient{ID: r.ID, FullName: r.FullName, Status: r.Status, CreatedAt: r.CreatedAt, Email: r.Email}, nil
 }

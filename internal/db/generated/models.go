@@ -226,11 +226,29 @@ type Organization struct {
 	UpdatedAt time.Time  `json:"updated_at"`
 }
 
+type PatientInvitation struct {
+	ID                uuid.UUID  `json:"id"`
+	PatientID         uuid.UUID  `json:"patient_id"`
+	OrganizationID    uuid.UUID  `json:"organization_id"`
+	Email             string     `json:"email"`
+	TokenHash         []byte     `json:"token_hash"`
+	TokenCiphertext   []byte     `json:"token_ciphertext"`
+	ExpiresAt         time.Time  `json:"expires_at"`
+	Status            string     `json:"status"`
+	DeliveryStatus    string     `json:"delivery_status"`
+	DeliveryAttempts  int32      `json:"delivery_attempts"`
+	LastDeliveryError *string    `json:"last_delivery_error"`
+	SentAt            *time.Time `json:"sent_at"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+}
+
 type PatientProfile struct {
 	ID             uuid.UUID   `json:"id"`
 	UserID         *uuid.UUID  `json:"user_id"`
 	OrganizationID uuid.UUID   `json:"organization_id"`
 	FullName       string      `json:"full_name"`
+	Email          string      `json:"email"`
 	CpfEncrypted   []byte      `json:"cpf_encrypted"`
 	BirthDate      pgtype.Date `json:"birth_date"`
 	Status         string      `json:"status"`

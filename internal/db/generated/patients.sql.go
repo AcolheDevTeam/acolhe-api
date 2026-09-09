@@ -13,15 +13,74 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createInvitation = `-- name: CreateInvitation :one
+INSERT INTO patient_invitation (patient_id, organization_id, email, token_hash, token_ciphertext, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, patient_id, organization_id, email, token_hash, token_ciphertext, expires_at,
+          status, delivery_status, delivery_attempts, last_delivery_error, sent_at
+`
+
+type CreateInvitationParams struct {
+	PatientID       uuid.UUID `json:"patient_id"`
+	OrganizationID  uuid.UUID `json:"organization_id"`
+	Email           string    `json:"email"`
+	TokenHash       []byte    `json:"token_hash"`
+	TokenCiphertext []byte    `json:"token_ciphertext"`
+	ExpiresAt       time.Time `json:"expires_at"`
+}
+
+type CreateInvitationRow struct {
+	ID                uuid.UUID  `json:"id"`
+	PatientID         uuid.UUID  `json:"patient_id"`
+	OrganizationID    uuid.UUID  `json:"organization_id"`
+	Email             string     `json:"email"`
+	TokenHash         []byte     `json:"token_hash"`
+	TokenCiphertext   []byte     `json:"token_ciphertext"`
+	ExpiresAt         time.Time  `json:"expires_at"`
+	Status            string     `json:"status"`
+	DeliveryStatus    string     `json:"delivery_status"`
+	DeliveryAttempts  int32      `json:"delivery_attempts"`
+	LastDeliveryError *string    `json:"last_delivery_error"`
+	SentAt            *time.Time `json:"sent_at"`
+}
+
+func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationParams) (CreateInvitationRow, error) {
+	row := q.db.QueryRow(ctx, createInvitation,
+		arg.PatientID,
+		arg.OrganizationID,
+		arg.Email,
+		arg.TokenHash,
+		arg.TokenCiphertext,
+		arg.ExpiresAt,
+	)
+	var i CreateInvitationRow
+	err := row.Scan(
+		&i.ID,
+		&i.PatientID,
+		&i.OrganizationID,
+		&i.Email,
+		&i.TokenHash,
+		&i.TokenCiphertext,
+		&i.ExpiresAt,
+		&i.Status,
+		&i.DeliveryStatus,
+		&i.DeliveryAttempts,
+		&i.LastDeliveryError,
+		&i.SentAt,
+	)
+	return i, err
+}
+
 const createPatient = `-- name: CreatePatient :one
-INSERT INTO patient_profile (organization_id, full_name, birth_date)
-VALUES ($1, $2, $3)
-RETURNING id, organization_id, full_name, birth_date, status, created_at
+INSERT INTO patient_profile (organization_id, full_name, email, birth_date)
+VALUES ($1, $2, $3, $4)
+RETURNING id, organization_id, full_name, email, birth_date, status, created_at
 `
 
 type CreatePatientParams struct {
 	OrganizationID uuid.UUID   `json:"organization_id"`
 	FullName       string      `json:"full_name"`
+	Email          string      `json:"email"`
 	BirthDate      pgtype.Date `json:"birth_date"`
 }
 
@@ -29,18 +88,25 @@ type CreatePatientRow struct {
 	ID             uuid.UUID   `json:"id"`
 	OrganizationID uuid.UUID   `json:"organization_id"`
 	FullName       string      `json:"full_name"`
+	Email          string      `json:"email"`
 	BirthDate      pgtype.Date `json:"birth_date"`
 	Status         string      `json:"status"`
 	CreatedAt      time.Time   `json:"created_at"`
 }
 
 func (q *Queries) CreatePatient(ctx context.Context, arg CreatePatientParams) (CreatePatientRow, error) {
-	row := q.db.QueryRow(ctx, createPatient, arg.OrganizationID, arg.FullName, arg.BirthDate)
+	row := q.db.QueryRow(ctx, createPatient,
+		arg.OrganizationID,
+		arg.FullName,
+		arg.Email,
+		arg.BirthDate,
+	)
 	var i CreatePatientRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrganizationID,
 		&i.FullName,
+		&i.Email,
 		&i.BirthDate,
 		&i.Status,
 		&i.CreatedAt,
@@ -48,8 +114,152 @@ func (q *Queries) CreatePatient(ctx context.Context, arg CreatePatientParams) (C
 	return i, err
 }
 
+const createPatientRelationship = `-- name: CreatePatientRelationship :exec
+INSERT INTO patient_relationship (patient_id, psychologist_id, status)
+VALUES ($1, $2, 'pending')
+`
+
+type CreatePatientRelationshipParams struct {
+	PatientID      uuid.UUID `json:"patient_id"`
+	PsychologistID uuid.UUID `json:"psychologist_id"`
+}
+
+func (q *Queries) CreatePatientRelationship(ctx context.Context, arg CreatePatientRelationshipParams) error {
+	_, err := q.db.Exec(ctx, createPatientRelationship, arg.PatientID, arg.PsychologistID)
+	return err
+}
+
+const getInvitationByID = `-- name: GetInvitationByID :one
+SELECT id, patient_id, organization_id, email, token_hash, token_ciphertext, expires_at,
+       status, delivery_status, delivery_attempts, last_delivery_error, sent_at
+FROM patient_invitation WHERE id = $1
+`
+
+type GetInvitationByIDRow struct {
+	ID                uuid.UUID  `json:"id"`
+	PatientID         uuid.UUID  `json:"patient_id"`
+	OrganizationID    uuid.UUID  `json:"organization_id"`
+	Email             string     `json:"email"`
+	TokenHash         []byte     `json:"token_hash"`
+	TokenCiphertext   []byte     `json:"token_ciphertext"`
+	ExpiresAt         time.Time  `json:"expires_at"`
+	Status            string     `json:"status"`
+	DeliveryStatus    string     `json:"delivery_status"`
+	DeliveryAttempts  int32      `json:"delivery_attempts"`
+	LastDeliveryError *string    `json:"last_delivery_error"`
+	SentAt            *time.Time `json:"sent_at"`
+}
+
+func (q *Queries) GetInvitationByID(ctx context.Context, id uuid.UUID) (GetInvitationByIDRow, error) {
+	row := q.db.QueryRow(ctx, getInvitationByID, id)
+	var i GetInvitationByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.PatientID,
+		&i.OrganizationID,
+		&i.Email,
+		&i.TokenHash,
+		&i.TokenCiphertext,
+		&i.ExpiresAt,
+		&i.Status,
+		&i.DeliveryStatus,
+		&i.DeliveryAttempts,
+		&i.LastDeliveryError,
+		&i.SentAt,
+	)
+	return i, err
+}
+
+const getInvitationByTokenHash = `-- name: GetInvitationByTokenHash :one
+SELECT id, patient_id, organization_id, email, token_hash, token_ciphertext, expires_at,
+       status, delivery_status, delivery_attempts, last_delivery_error, sent_at
+FROM patient_invitation WHERE token_hash = $1
+`
+
+type GetInvitationByTokenHashRow struct {
+	ID                uuid.UUID  `json:"id"`
+	PatientID         uuid.UUID  `json:"patient_id"`
+	OrganizationID    uuid.UUID  `json:"organization_id"`
+	Email             string     `json:"email"`
+	TokenHash         []byte     `json:"token_hash"`
+	TokenCiphertext   []byte     `json:"token_ciphertext"`
+	ExpiresAt         time.Time  `json:"expires_at"`
+	Status            string     `json:"status"`
+	DeliveryStatus    string     `json:"delivery_status"`
+	DeliveryAttempts  int32      `json:"delivery_attempts"`
+	LastDeliveryError *string    `json:"last_delivery_error"`
+	SentAt            *time.Time `json:"sent_at"`
+}
+
+func (q *Queries) GetInvitationByTokenHash(ctx context.Context, tokenHash []byte) (GetInvitationByTokenHashRow, error) {
+	row := q.db.QueryRow(ctx, getInvitationByTokenHash, tokenHash)
+	var i GetInvitationByTokenHashRow
+	err := row.Scan(
+		&i.ID,
+		&i.PatientID,
+		&i.OrganizationID,
+		&i.Email,
+		&i.TokenHash,
+		&i.TokenCiphertext,
+		&i.ExpiresAt,
+		&i.Status,
+		&i.DeliveryStatus,
+		&i.DeliveryAttempts,
+		&i.LastDeliveryError,
+		&i.SentAt,
+	)
+	return i, err
+}
+
+const getInvitationForPatient = `-- name: GetInvitationForPatient :one
+SELECT id, patient_id, organization_id, email, token_hash, token_ciphertext, expires_at,
+       status, delivery_status, delivery_attempts, last_delivery_error, sent_at
+FROM patient_invitation WHERE patient_id = $1 AND organization_id = $2
+ORDER BY created_at DESC LIMIT 1
+`
+
+type GetInvitationForPatientParams struct {
+	PatientID      uuid.UUID `json:"patient_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+}
+
+type GetInvitationForPatientRow struct {
+	ID                uuid.UUID  `json:"id"`
+	PatientID         uuid.UUID  `json:"patient_id"`
+	OrganizationID    uuid.UUID  `json:"organization_id"`
+	Email             string     `json:"email"`
+	TokenHash         []byte     `json:"token_hash"`
+	TokenCiphertext   []byte     `json:"token_ciphertext"`
+	ExpiresAt         time.Time  `json:"expires_at"`
+	Status            string     `json:"status"`
+	DeliveryStatus    string     `json:"delivery_status"`
+	DeliveryAttempts  int32      `json:"delivery_attempts"`
+	LastDeliveryError *string    `json:"last_delivery_error"`
+	SentAt            *time.Time `json:"sent_at"`
+}
+
+func (q *Queries) GetInvitationForPatient(ctx context.Context, arg GetInvitationForPatientParams) (GetInvitationForPatientRow, error) {
+	row := q.db.QueryRow(ctx, getInvitationForPatient, arg.PatientID, arg.OrganizationID)
+	var i GetInvitationForPatientRow
+	err := row.Scan(
+		&i.ID,
+		&i.PatientID,
+		&i.OrganizationID,
+		&i.Email,
+		&i.TokenHash,
+		&i.TokenCiphertext,
+		&i.ExpiresAt,
+		&i.Status,
+		&i.DeliveryStatus,
+		&i.DeliveryAttempts,
+		&i.LastDeliveryError,
+		&i.SentAt,
+	)
+	return i, err
+}
+
 const getPatient = `-- name: GetPatient :one
-SELECT id, organization_id, full_name, birth_date, status, created_at
+SELECT id, organization_id, full_name, email, birth_date, status, created_at
 FROM patient_profile
 WHERE id = $1
   AND organization_id = $2
@@ -65,6 +275,7 @@ type GetPatientRow struct {
 	ID             uuid.UUID   `json:"id"`
 	OrganizationID uuid.UUID   `json:"organization_id"`
 	FullName       string      `json:"full_name"`
+	Email          string      `json:"email"`
 	BirthDate      pgtype.Date `json:"birth_date"`
 	Status         string      `json:"status"`
 	CreatedAt      time.Time   `json:"created_at"`
@@ -77,6 +288,7 @@ func (q *Queries) GetPatient(ctx context.Context, arg GetPatientParams) (GetPati
 		&i.ID,
 		&i.OrganizationID,
 		&i.FullName,
+		&i.Email,
 		&i.BirthDate,
 		&i.Status,
 		&i.CreatedAt,
@@ -122,4 +334,44 @@ func (q *Queries) ListPatientsByOrg(ctx context.Context, organizationID uuid.UUI
 		return nil, err
 	}
 	return items, nil
+}
+
+const markInvitationFailed = `-- name: MarkInvitationFailed :exec
+UPDATE patient_invitation SET delivery_status = 'failed', delivery_attempts = delivery_attempts + 1,
+  last_delivery_error = $1, updated_at = now() WHERE id = $2
+`
+
+type MarkInvitationFailedParams struct {
+	LastDeliveryError *string   `json:"last_delivery_error"`
+	ID                uuid.UUID `json:"id"`
+}
+
+func (q *Queries) MarkInvitationFailed(ctx context.Context, arg MarkInvitationFailedParams) error {
+	_, err := q.db.Exec(ctx, markInvitationFailed, arg.LastDeliveryError, arg.ID)
+	return err
+}
+
+const markInvitationSent = `-- name: MarkInvitationSent :exec
+UPDATE patient_invitation SET delivery_status = 'sent', delivery_attempts = delivery_attempts + 1,
+  last_delivery_error = NULL, sent_at = now(), updated_at = now() WHERE id = $1
+`
+
+func (q *Queries) MarkInvitationSent(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markInvitationSent, id)
+	return err
+}
+
+const revokePendingInvitations = `-- name: RevokePendingInvitations :exec
+UPDATE patient_invitation SET status = 'revoked', updated_at = now()
+WHERE patient_id = $1 AND organization_id = $2 AND status = 'pending'
+`
+
+type RevokePendingInvitationsParams struct {
+	PatientID      uuid.UUID `json:"patient_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+}
+
+func (q *Queries) RevokePendingInvitations(ctx context.Context, arg RevokePendingInvitationsParams) error {
+	_, err := q.db.Exec(ctx, revokePendingInvitations, arg.PatientID, arg.OrganizationID)
+	return err
 }

@@ -14,9 +14,10 @@ import (
 
 // Tipos de tarefa (spec §7).
 const (
-	TypeLGPDExport = "lgpd:export"           // SLA 24h (requisito LGPD)
-	TypeReminder   = "notification:reminder" // lembrete antes do agendamento
-	TypePDF        = "document:pdf"          // geração de declaração/recibo
+	TypeLGPDExport      = "lgpd:export"           // SLA 24h (requisito LGPD)
+	TypeReminder        = "notification:reminder" // lembrete antes do agendamento
+	TypePDF             = "document:pdf"          // geração de declaração/recibo
+	TypeInvitationEmail = "patient:invitation_email"
 )
 
 // --- payloads ---
@@ -36,6 +37,10 @@ type PDFPayload struct {
 	DocumentID     uuid.UUID `json:"documentId"`
 	PatientID      uuid.UUID `json:"patientId"`
 	PsychologistID uuid.UUID `json:"psychologistId"`
+}
+
+type InvitationEmailPayload struct {
+	InvitationID uuid.UUID `json:"invitationId"`
 }
 
 // --- construtores (usados pelos produtores) ---
@@ -65,4 +70,12 @@ func NewPDFTask(p PDFPayload) (*asynq.Task, error) {
 		return nil, err
 	}
 	return asynq.NewTask(TypePDF, b, asynq.MaxRetry(3)), nil
+}
+
+func NewInvitationEmailTask(p InvitationEmailPayload) (*asynq.Task, error) {
+	b, err := json.Marshal(p)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TypeInvitationEmail, b, asynq.MaxRetry(5), asynq.Timeout(2*time.Minute)), nil
 }

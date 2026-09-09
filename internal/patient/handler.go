@@ -1,6 +1,7 @@
 package patient
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -20,7 +21,10 @@ func (h *Handler) Register(e *echo.Echo) {
 	g := e.Group("/patients")
 	g.GET("", h.list)
 	g.GET("/:id", h.get)
+	g.POST("", h.create)
+	g.POST("/:id/invitation", h.resend)
 	g.POST("/:id/export", h.requestExport)
+	e.GET("/invites/:token", h.validate)
 }
 
 func (h *Handler) requestExport(c echo.Context) error {
@@ -59,4 +63,45 @@ func (h *Handler) get(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, err.Error())
 	}
 	return c.JSON(http.StatusOK, p)
+}
+
+func (h *Handler) create(c echo.Context) error {
+	var req struct {
+		FullName string `json:"fullName"`
+		Email    string `json:"email"`
+	}
+	if err := json.NewDecoder(c.Request().Body).Decode(&req); err != nil || req.FullName == "" || req.Email == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "nome e e-mail são obrigatórios")
+	}
+	result, err := h.svc.Create(c.Request().Context(), req.FullName, req.Email)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "não foi possível criar o convite")
+	}
+	return c.JSON(http.StatusCreated, result)
+}
+
+func (h *Handler) resend(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "id inválido")
+	}
+	result, err := h.svc.Resend(c.Request().Context(), id)
+	if errors.Is(err, ErrInviteRateLimited) {
+		return echo.NewHTTPError(http.StatusTooManyRequests, err.Error())
+	}
+	if errors.Is(err, ErrNotFound) {
+		return echo.NewHTTPError(http.StatusNotFound, err.Error())
+	}
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "não foi possível reenviar o convite")
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) validate(c echo.Context) error {
+	status, err := h.svc.Validate(c.Request().Context(), c.Param("token"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "convite inválido ou expirado")
+	}
+	return c.JSON(http.StatusOK, status)
 }

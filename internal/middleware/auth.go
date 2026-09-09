@@ -14,8 +14,9 @@ import (
 
 // publicPaths não exigem JWT (login emite o token; health é probe de liveness).
 var publicPaths = map[string]bool{
-	"/health": true,
-	"/login":  true,
+	"/health":         true,
+	"/login":          true,
+	"/invites/:token": true,
 }
 
 // claimsContextKey guarda as claims cruas para o middleware de tenant consumir.

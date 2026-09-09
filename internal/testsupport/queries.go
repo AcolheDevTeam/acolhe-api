@@ -26,6 +26,7 @@ type FakeQuerier struct {
 	GetActiveRelationshipFn     func(ctx context.Context, arg db.GetActiveRelationshipParams) (db.GetActiveRelationshipRow, error)
 	GetPatientExportAccessFn    func(ctx context.Context, arg db.GetPatientExportAccessParams) (db.GetPatientExportAccessRow, error)
 	GetPatientForPsychFn        func(ctx context.Context, arg db.GetPatientForPsychologistParams) (db.GetPatientForPsychologistRow, error)
+	GetPatientPortalContextFn   func(ctx context.Context, userID *uuid.UUID) (db.GetPatientPortalContextRow, error)
 	GetReissuableInvitationFn   func(ctx context.Context, arg db.GetReissuableInvitationForPatientParams) (db.GetReissuableInvitationForPatientRow, error)
 	ReissuePatientInvitationFn  func(ctx context.Context, arg db.ReissuePatientInvitationParams) (db.ReissuePatientInvitationRow, error)
 	CreateLGPDExportRequestFn   func(ctx context.Context, arg db.CreateLGPDExportRequestParams) (db.LgpdExportRequest, error)
@@ -48,6 +49,13 @@ type FakeQuerier struct {
 	ListPatientsByOrgFn         func(ctx context.Context, organizationID uuid.UUID) ([]db.ListPatientsByOrgRow, error)
 	ListPatientsByPsychFn       func(ctx context.Context, arg db.ListPatientsByPsychologistParams) ([]db.ListPatientsByPsychologistRow, error)
 	WriteAuditLogFn             func(ctx context.Context, arg db.WriteAuditLogParams) error
+}
+
+func (f *FakeQuerier) GetPatientPortalContext(ctx context.Context, userID *uuid.UUID) (db.GetPatientPortalContextRow, error) {
+	if f.GetPatientPortalContextFn != nil {
+		return f.GetPatientPortalContextFn(ctx, userID)
+	}
+	panic("GetPatientPortalContext não configurado no FakeQuerier")
 }
 
 func (f *FakeQuerier) GetPatientForPsychologist(ctx context.Context, arg db.GetPatientForPsychologistParams) (db.GetPatientForPsychologistRow, error) {

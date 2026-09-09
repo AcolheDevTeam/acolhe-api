@@ -8,13 +8,9 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-type Handler struct {
-	svc *Service
-}
+type Handler struct{ svc *Service }
 
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
-}
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 func (h *Handler) Register(e *echo.Echo) {
 	g := e.Group("/patients")
@@ -23,6 +19,69 @@ func (h *Handler) Register(e *echo.Echo) {
 	g.GET("/:id", h.get)
 	g.POST("/:id/invitation", h.reissueInvitation)
 	g.POST("/:id/export", h.requestExport)
+
+	portal := e.Group("/patient")
+	portal.GET("/context", h.portalContext)
+	portal.GET("/next-session", h.nextSession)
+	portal.GET("/pending-activities", h.pendingActivities)
+	portal.GET("/check-ins", h.checkins)
+	portal.POST("/check-ins", h.createPatientCheckin)
+	portal.GET("/process-summary", h.processSummary)
+}
+
+func (h *Handler) portalContext(c echo.Context) error {
+	result, err := h.svc.PortalContext(c.Request().Context())
+	if err != nil {
+		return portalError(err)
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) nextSession(c echo.Context) error {
+	result, err := h.svc.NextSession(c.Request().Context())
+	if err != nil {
+		return portalError(err)
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) pendingActivities(c echo.Context) error {
+	result, err := h.svc.PendingActivities(c.Request().Context())
+	if err != nil {
+		return portalError(err)
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) checkins(c echo.Context) error {
+	result, err := h.svc.Checkins(c.Request().Context())
+	if err != nil {
+		return portalError(err)
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) createPatientCheckin(c echo.Context) error {
+	var req CheckinRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "corpo inválido")
+	}
+	result, err := h.svc.CreatePatientCheckin(c.Request().Context(), req)
+	if err != nil {
+		if errors.Is(err, ErrInvalidMood) {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		return portalError(err)
+	}
+	return c.JSON(http.StatusCreated, result)
+}
+
+func (h *Handler) processSummary(c echo.Context) error {
+	result, err := h.svc.ProcessSummary(c.Request().Context())
+	if err != nil {
+		return portalError(err)
+	}
+	return c.JSON(http.StatusOK, result)
 }
 
 func (h *Handler) create(c echo.Context) error {

@@ -13,6 +13,9 @@ import (
 type Querier interface {
 	AcceptPatientInvitation(ctx context.Context, arg AcceptPatientInvitationParams) (AcceptPatientInvitationRow, error)
 	ClaimAssignmentForSubmission(ctx context.Context, arg ClaimAssignmentForSubmissionParams) (int64, error)
+	// Claim delivery atomically. This is both the resend rate limit and the
+	// persistent attempt cap; concurrent requests cannot claim the same attempt.
+	ClaimInvitationDelivery(ctx context.Context, id uuid.UUID) (int32, error)
 	// Conta agendamentos do psicólogo cujo intervalo se sobrepõe à janela informada.
 	// tstzrange(...) && tstzrange(...) testa interseção de intervalos.
 	// O service calcula window_end = scheduled_for + duration; assim a query só recebe timestamptz.
@@ -82,6 +85,7 @@ type Querier interface {
 	// Confirma que o paciente pertence à organização (usado antes de criar check-in).
 	PatientInOrg(ctx context.Context, arg PatientInOrgParams) (bool, error)
 	ReissuePatientInvitation(ctx context.Context, arg ReissuePatientInvitationParams) (ReissuePatientInvitationRow, error)
+	SetInvitationDeliveryStatus(ctx context.Context, arg SetInvitationDeliveryStatusParams) error
 	// Cria (submete) a resposta de uma atividade e marca o assignment como submitted.
 	SubmitResponse(ctx context.Context, arg SubmitResponseParams) (SubmitResponseRow, error)
 	UpdateAppointmentStatus(ctx context.Context, arg UpdateAppointmentStatusParams) (UpdateAppointmentStatusRow, error)

@@ -29,8 +29,9 @@ var (
 	// ErrInvalidInput indica dados inválidos no cadastro do paciente.
 	ErrInvalidInput = errors.New("dados do paciente inválidos")
 	// ErrPsychologistRequired indica que apenas psicólogos podem cadastrar pacientes.
-	ErrPsychologistRequired = errors.New("perfil de psicólogo obrigatório")
-	ErrInvitationDelivery   = errors.New("falha na entrega do convite")
+	ErrPsychologistRequired  = errors.New("perfil de psicólogo obrigatório")
+	ErrInvitationDelivery    = errors.New("falha na entrega do convite")
+	ErrInvitationRateLimited = errors.New("limite de envio do convite atingido")
 )
 
 type Service struct {
@@ -40,7 +41,13 @@ type Service struct {
 }
 
 func NewService(q db.Querier, queue taskqueue.Enqueuer) *Service {
-	return &Service{q: q, queue: queue, mailer: defaultInvitationMailer()}
+	return NewServiceWithMailer(q, queue, defaultInvitationMailer())
+}
+
+// NewServiceWithMailer allows deterministic delivery tests without changing
+// the production SMTP configuration.
+func NewServiceWithMailer(q db.Querier, queue taskqueue.Enqueuer, mailer InvitationMailer) *Service {
+	return &Service{q: q, queue: queue, mailer: mailer}
 }
 
 // RequestExport enfileira a exportação LGPD dos dados de um paciente (SLA 24h).
@@ -165,6 +172,9 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Patient, erro
 		if existing.Email != email || existing.Status != "pending" {
 			return nil, ErrInvalidInput
 		}
+		if invitationDeliveryLimited(existing.DeliveryAttempts, existing.LastDeliveryAt) {
+			return nil, ErrInvitationRateLimited
+		}
 		reissued, err := q.ReissuePatientInvitation(ctx, db.ReissuePatientInvitationParams{
 			ID: existing.ID, TokenDigest: digest, ExpiresAt: expiresAt,
 		})
@@ -177,10 +187,8 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Patient, erro
 		if err != nil {
 			return nil, err
 		}
-		invitation := &Invitation{ID: reissued.ID, Token: token, Email: email, ExpiresAt: reissued.ExpiresAt}
-		if err := s.deliverInvitation(invitation, row.FullName); err != nil {
-			return nil, err
-		}
+		invitation := &Invitation{ID: reissued.ID, Token: token, Email: email, ExpiresAt: reissued.ExpiresAt, DeliveryStatus: "queued"}
+		s.deliverInvitation(ctx, q, invitation, row.FullName)
 		return toPatient(row.ID, row.FullName, row.Status, row.RelationshipStatus, row.CreatedAt, invitation), nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -218,26 +226,36 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Patient, erro
 	if err != nil {
 		return nil, err
 	}
-	delivery := &Invitation{ID: invitation.ID, Token: token, Email: email, ExpiresAt: invitation.ExpiresAt}
-	if err := s.deliverInvitation(delivery, row.FullName); err != nil {
-		return nil, err
-	}
+	delivery := &Invitation{ID: invitation.ID, Token: token, Email: email, ExpiresAt: invitation.ExpiresAt, DeliveryStatus: "queued"}
+	s.deliverInvitation(ctx, q, delivery, row.FullName)
 	return toPatient(row.ID, row.FullName, row.Status, row.RelationshipStatus, row.CreatedAt, delivery), nil
 }
 
-func (s *Service) deliverInvitation(invitation *Invitation, patientName string) error {
+func invitationDeliveryLimited(attempts int32, lastDeliveryAt *time.Time) bool {
+	return attempts >= 5 || (lastDeliveryAt != nil && time.Since(*lastDeliveryAt) < time.Minute)
+}
+
+func (s *Service) deliverInvitation(ctx context.Context, q db.Querier, invitation *Invitation, patientName string) {
 	if s.mailer == nil {
-		return ErrInvitationDelivery
+		invitation.DeliveryStatus = "failed"
+		_ = q.SetInvitationDeliveryStatus(ctx, db.SetInvitationDeliveryStatusParams{ID: invitation.ID, DeliveryStatus: "failed"})
+		return
+	}
+	if _, err := q.ClaimInvitationDelivery(ctx, invitation.ID); err != nil {
+		invitation.DeliveryStatus = "failed"
+		return
 	}
 	link := strings.TrimRight(env("FRONTEND_URL", "http://localhost:3000"), "/") + "/invite/" + invitation.Token
 	body := "Olá, " + patientName + ". Você recebeu um convite para acessar o Acolhe. Este link é válido até " + invitation.ExpiresAt.Format(time.RFC3339) + ":\n\n" + link
 	for attempt := 0; attempt < 3; attempt++ {
 		if err := s.mailer.Send(invitation.Email, "Seu convite para o Acolhe", body); err == nil {
 			invitation.DeliveryStatus = "sent"
-			return nil
+			_ = q.SetInvitationDeliveryStatus(ctx, db.SetInvitationDeliveryStatusParams{ID: invitation.ID, DeliveryStatus: "sent"})
+			return
 		}
 	}
-	return ErrInvitationDelivery
+	invitation.DeliveryStatus = "failed"
+	_ = q.SetInvitationDeliveryStatus(ctx, db.SetInvitationDeliveryStatusParams{ID: invitation.ID, DeliveryStatus: "failed"})
 }
 
 // List devolve os pacientes da organização do requisitante.
@@ -307,6 +325,9 @@ func (s *Service) ReissueInvitation(ctx context.Context, patientID uuid.UUID) (*
 		}
 		return nil, err
 	}
+	if invitationDeliveryLimited(pending.DeliveryAttempts, pending.LastDeliveryAt) {
+		return nil, ErrInvitationRateLimited
+	}
 
 	token, digest, err := newInvitationToken()
 	if err != nil {
@@ -323,7 +344,9 @@ func (s *Service) ReissueInvitation(ctx context.Context, patientID uuid.UUID) (*
 		return nil, err
 	}
 
-	return &Invitation{Token: token, Email: pending.Email, ExpiresAt: reissued.ExpiresAt}, nil
+	invitation := &Invitation{ID: reissued.ID, Token: token, Email: pending.Email, ExpiresAt: reissued.ExpiresAt, DeliveryStatus: "queued"}
+	s.deliverInvitation(ctx, q, invitation, pending.PatientName)
+	return invitation, nil
 }
 
 func newInvitationToken() (string, []byte, error) {

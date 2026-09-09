@@ -269,19 +269,22 @@ type Organization struct {
 }
 
 type PatientInvitation struct {
-	ID              uuid.UUID  `json:"id"`
-	PatientID       uuid.UUID  `json:"patient_id"`
-	RelationshipID  uuid.UUID  `json:"relationship_id"`
-	Email           string     `json:"email"`
-	TokenDigest     []byte     `json:"token_digest"`
-	IdempotencyKey  uuid.UUID  `json:"idempotency_key"`
-	CreatedByUserID uuid.UUID  `json:"created_by_user_id"`
-	Status          string     `json:"status"`
-	ExpiresAt       time.Time  `json:"expires_at"`
-	AcceptedAt      *time.Time `json:"accepted_at"`
-	DeclinedAt      *time.Time `json:"declined_at"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID               uuid.UUID  `json:"id"`
+	PatientID        uuid.UUID  `json:"patient_id"`
+	RelationshipID   uuid.UUID  `json:"relationship_id"`
+	Email            string     `json:"email"`
+	TokenDigest      []byte     `json:"token_digest"`
+	IdempotencyKey   uuid.UUID  `json:"idempotency_key"`
+	CreatedByUserID  uuid.UUID  `json:"created_by_user_id"`
+	Status           string     `json:"status"`
+	DeliveryStatus   string     `json:"delivery_status"`
+	DeliveryAttempts int32      `json:"delivery_attempts"`
+	LastDeliveryAt   *time.Time `json:"last_delivery_at"`
+	ExpiresAt        time.Time  `json:"expires_at"`
+	AcceptedAt       *time.Time `json:"accepted_at"`
+	DeclinedAt       *time.Time `json:"declined_at"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 type PatientProfile struct {

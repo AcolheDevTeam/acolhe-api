@@ -63,6 +63,28 @@ func (q *Queries) AcceptPatientInvitation(ctx context.Context, arg AcceptPatient
 	return i, err
 }
 
+const claimInvitationDelivery = `-- name: ClaimInvitationDelivery :one
+UPDATE patient_invitation
+SET delivery_status = 'sending',
+    delivery_attempts = delivery_attempts + 1,
+    last_delivery_at = now(),
+    updated_at = now()
+WHERE id = $1
+  AND status = 'pending'
+  AND delivery_attempts < 5
+  AND (last_delivery_at IS NULL OR last_delivery_at <= now() - interval '1 minute')
+RETURNING delivery_attempts
+`
+
+// Claim delivery atomically. This is both the resend rate limit and the
+// persistent attempt cap; concurrent requests cannot claim the same attempt.
+func (q *Queries) ClaimInvitationDelivery(ctx context.Context, id uuid.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, claimInvitationDelivery, id)
+	var delivery_attempts int32
+	err := row.Scan(&delivery_attempts)
+	return delivery_attempts, err
+}
+
 const createPatientInvitation = `-- name: CreatePatientInvitation :one
 INSERT INTO patient_invitation (
   patient_id, relationship_id, email, token_digest, idempotency_key,
@@ -71,7 +93,7 @@ INSERT INTO patient_invitation (
   $1, $2, lower($3), $4,
   $5, $6, $7
 )
-RETURNING id, expires_at
+RETURNING id, expires_at, delivery_status
 `
 
 type CreatePatientInvitationParams struct {
@@ -85,8 +107,9 @@ type CreatePatientInvitationParams struct {
 }
 
 type CreatePatientInvitationRow struct {
-	ID        uuid.UUID `json:"id"`
-	ExpiresAt time.Time `json:"expires_at"`
+	ID             uuid.UUID `json:"id"`
+	ExpiresAt      time.Time `json:"expires_at"`
+	DeliveryStatus string    `json:"delivery_status"`
 }
 
 func (q *Queries) CreatePatientInvitation(ctx context.Context, arg CreatePatientInvitationParams) (CreatePatientInvitationRow, error) {
@@ -100,7 +123,7 @@ func (q *Queries) CreatePatientInvitation(ctx context.Context, arg CreatePatient
 		arg.ExpiresAt,
 	)
 	var i CreatePatientInvitationRow
-	err := row.Scan(&i.ID, &i.ExpiresAt)
+	err := row.Scan(&i.ID, &i.ExpiresAt, &i.DeliveryStatus)
 	return i, err
 }
 
@@ -122,7 +145,8 @@ func (q *Queries) DeclinePatientInvitation(ctx context.Context, arg DeclinePatie
 }
 
 const getInvitationByCreationKey = `-- name: GetInvitationByCreationKey :one
-SELECT i.id, i.patient_id, i.relationship_id, i.email, i.status, i.expires_at
+SELECT i.id, i.patient_id, i.relationship_id, i.email, i.status, i.expires_at,
+       i.delivery_status, i.delivery_attempts, i.last_delivery_at
 FROM patient_invitation i
 WHERE i.created_by_user_id = $1
   AND i.idempotency_key = $2
@@ -134,12 +158,15 @@ type GetInvitationByCreationKeyParams struct {
 }
 
 type GetInvitationByCreationKeyRow struct {
-	ID             uuid.UUID `json:"id"`
-	PatientID      uuid.UUID `json:"patient_id"`
-	RelationshipID uuid.UUID `json:"relationship_id"`
-	Email          string    `json:"email"`
-	Status         string    `json:"status"`
-	ExpiresAt      time.Time `json:"expires_at"`
+	ID               uuid.UUID  `json:"id"`
+	PatientID        uuid.UUID  `json:"patient_id"`
+	RelationshipID   uuid.UUID  `json:"relationship_id"`
+	Email            string     `json:"email"`
+	Status           string     `json:"status"`
+	ExpiresAt        time.Time  `json:"expires_at"`
+	DeliveryStatus   string     `json:"delivery_status"`
+	DeliveryAttempts int32      `json:"delivery_attempts"`
+	LastDeliveryAt   *time.Time `json:"last_delivery_at"`
 }
 
 func (q *Queries) GetInvitationByCreationKey(ctx context.Context, arg GetInvitationByCreationKeyParams) (GetInvitationByCreationKeyRow, error) {
@@ -152,6 +179,9 @@ func (q *Queries) GetInvitationByCreationKey(ctx context.Context, arg GetInvitat
 		&i.Email,
 		&i.Status,
 		&i.ExpiresAt,
+		&i.DeliveryStatus,
+		&i.DeliveryAttempts,
+		&i.LastDeliveryAt,
 	)
 	return i, err
 }
@@ -206,7 +236,8 @@ func (q *Queries) GetInvitationByDigest(ctx context.Context, tokenDigest []byte)
 }
 
 const getReissuableInvitationForPatient = `-- name: GetReissuableInvitationForPatient :one
-SELECT i.id, i.email
+SELECT i.id, i.email, p.full_name AS patient_name,
+       i.delivery_attempts, i.last_delivery_at
 FROM patient_invitation i
 JOIN patient_relationship r ON r.id = i.relationship_id
 JOIN patient_profile p ON p.id = i.patient_id
@@ -227,14 +258,23 @@ type GetReissuableInvitationForPatientParams struct {
 }
 
 type GetReissuableInvitationForPatientRow struct {
-	ID    uuid.UUID `json:"id"`
-	Email string    `json:"email"`
+	ID               uuid.UUID  `json:"id"`
+	Email            string     `json:"email"`
+	PatientName      string     `json:"patient_name"`
+	DeliveryAttempts int32      `json:"delivery_attempts"`
+	LastDeliveryAt   *time.Time `json:"last_delivery_at"`
 }
 
 func (q *Queries) GetReissuableInvitationForPatient(ctx context.Context, arg GetReissuableInvitationForPatientParams) (GetReissuableInvitationForPatientRow, error) {
 	row := q.db.QueryRow(ctx, getReissuableInvitationForPatient, arg.PatientID, arg.OrganizationID, arg.PsychologistID)
 	var i GetReissuableInvitationForPatientRow
-	err := row.Scan(&i.ID, &i.Email)
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PatientName,
+		&i.DeliveryAttempts,
+		&i.LastDeliveryAt,
+	)
 	return i, err
 }
 
@@ -300,11 +340,13 @@ const reissuePatientInvitation = `-- name: ReissuePatientInvitation :one
 UPDATE patient_invitation
 SET token_digest = $1,
     status = 'pending',
+    delivery_status = 'queued',
+    last_delivery_at = NULL,
     expires_at = $2,
     updated_at = now()
 WHERE id = $3
   AND status IN ('pending', 'expired')
-RETURNING id, expires_at
+RETURNING id, expires_at, delivery_status
 `
 
 type ReissuePatientInvitationParams struct {
@@ -314,13 +356,31 @@ type ReissuePatientInvitationParams struct {
 }
 
 type ReissuePatientInvitationRow struct {
-	ID        uuid.UUID `json:"id"`
-	ExpiresAt time.Time `json:"expires_at"`
+	ID             uuid.UUID `json:"id"`
+	ExpiresAt      time.Time `json:"expires_at"`
+	DeliveryStatus string    `json:"delivery_status"`
 }
 
 func (q *Queries) ReissuePatientInvitation(ctx context.Context, arg ReissuePatientInvitationParams) (ReissuePatientInvitationRow, error) {
 	row := q.db.QueryRow(ctx, reissuePatientInvitation, arg.TokenDigest, arg.ExpiresAt, arg.ID)
 	var i ReissuePatientInvitationRow
-	err := row.Scan(&i.ID, &i.ExpiresAt)
+	err := row.Scan(&i.ID, &i.ExpiresAt, &i.DeliveryStatus)
 	return i, err
+}
+
+const setInvitationDeliveryStatus = `-- name: SetInvitationDeliveryStatus :exec
+UPDATE patient_invitation
+SET delivery_status = $1,
+    updated_at = now()
+WHERE id = $2
+`
+
+type SetInvitationDeliveryStatusParams struct {
+	DeliveryStatus string    `json:"delivery_status"`
+	ID             uuid.UUID `json:"id"`
+}
+
+func (q *Queries) SetInvitationDeliveryStatus(ctx context.Context, arg SetInvitationDeliveryStatusParams) error {
+	_, err := q.db.Exec(ctx, setInvitationDeliveryStatus, arg.DeliveryStatus, arg.ID)
+	return err
 }

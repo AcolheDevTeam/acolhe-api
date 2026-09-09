@@ -86,6 +86,11 @@ func TestPatientInvitationLoginMeAndPortalIsolation(t *testing.T) {
 	require.Equal(t, patientID, meResult.Patient.ID)
 	require.Equal(t, "active", meResult.Patient.RelationshipStatus)
 	require.True(t, meResult.Patient.Consented)
+	var otherOrgID, otherPatientID uuid.UUID
+	require.NoError(t, pool.QueryRow(ctx,
+		`INSERT INTO organization (name, slug) VALUES ('Org other portal', 'org-other-portal') RETURNING id`).Scan(&otherOrgID))
+	require.NoError(t, pool.QueryRow(ctx,
+		`INSERT INTO patient_profile (organization_id, full_name) VALUES ($1, 'Outro paciente') RETURNING id`, otherOrgID).Scan(&otherPatientID))
 
 	portal := doJSON(t, srv.Client(), http.MethodGet, srv.URL+"/patient/context", loginResult.Token, nil)
 	require.Equal(t, http.StatusOK, portal.StatusCode)
@@ -94,19 +99,18 @@ func TestPatientInvitationLoginMeAndPortalIsolation(t *testing.T) {
 	// Every portal contract is patient-scoped from the JWT. Forged patient IDs
 	// in query/body input must not change the visible patient or write target.
 	for _, endpoint := range []string{
-		"/patient/context?patientId=" + uuid.NewString(),
-		"/patient/next-session?patientId=" + uuid.NewString(),
-		"/patient/pending-activities?patientId=" + uuid.NewString(),
-		"/patient/check-ins?patientId=" + uuid.NewString(),
-		"/patient/process-summary?patientId=" + uuid.NewString(),
+		"/patient/context?patientId=" + otherPatientID.String(),
+		"/patient/next-session?patientId=" + otherPatientID.String(),
+		"/patient/pending-activities?patientId=" + otherPatientID.String(),
+		"/patient/check-ins?patientId=" + otherPatientID.String(),
+		"/patient/process-summary?patientId=" + otherPatientID.String(),
 	} {
 		response := doJSON(t, srv.Client(), http.MethodGet, srv.URL+endpoint, loginResult.Token, nil)
 		require.Equal(t, http.StatusOK, response.StatusCode, endpoint)
 		require.NoError(t, response.Body.Close())
 	}
-	forgedPatientID := uuid.New()
 	createdCheckin := doJSON(t, srv.Client(), http.MethodPost, srv.URL+"/patient/check-ins",
-		loginResult.Token, map[string]any{"mood": 4, "patientId": forgedPatientID})
+		loginResult.Token, map[string]any{"mood": 4, "patientId": otherPatientID})
 	require.Equal(t, http.StatusCreated, createdCheckin.StatusCode)
 	var checkinResult struct {
 		ID        uuid.UUID `json:"id"`

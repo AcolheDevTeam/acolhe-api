@@ -11,6 +11,37 @@ import (
 	"github.com/google/uuid"
 )
 
+const createPatientUser = `-- name: CreatePatientUser :one
+INSERT INTO "user" (organization_id, email, password_hash, role)
+VALUES ($1, lower($2), $3, 'patient')
+RETURNING id, organization_id, email, role
+`
+
+type CreatePatientUserParams struct {
+	OrganizationID *uuid.UUID `json:"organization_id"`
+	Email          string     `json:"email"`
+	PasswordHash   string     `json:"password_hash"`
+}
+
+type CreatePatientUserRow struct {
+	ID             uuid.UUID  `json:"id"`
+	OrganizationID *uuid.UUID `json:"organization_id"`
+	Email          string     `json:"email"`
+	Role           string     `json:"role"`
+}
+
+func (q *Queries) CreatePatientUser(ctx context.Context, arg CreatePatientUserParams) (CreatePatientUserRow, error) {
+	row := q.db.QueryRow(ctx, createPatientUser, arg.OrganizationID, arg.Email, arg.PasswordHash)
+	var i CreatePatientUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.Email,
+		&i.Role,
+	)
+	return i, err
+}
+
 const getPsychologistByUser = `-- name: GetPsychologistByUser :one
 SELECT id, user_id, full_name, crp_number, crp_state, crp_status
 FROM psychologist_profile
@@ -94,4 +125,19 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow
 		&i.Status,
 	)
 	return i, err
+}
+
+const linkPatientUser = `-- name: LinkPatientUser :exec
+UPDATE patient_profile SET user_id = $1, updated_at = now()
+WHERE id = $2 AND user_id IS NULL
+`
+
+type LinkPatientUserParams struct {
+	UserID    *uuid.UUID `json:"user_id"`
+	PatientID uuid.UUID  `json:"patient_id"`
+}
+
+func (q *Queries) LinkPatientUser(ctx context.Context, arg LinkPatientUserParams) error {
+	_, err := q.db.Exec(ctx, linkPatientUser, arg.UserID, arg.PatientID)
+	return err
 }

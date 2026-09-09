@@ -21,6 +21,107 @@ func (h *Handler) Register(e *echo.Echo) {
 	g.GET("", h.list)
 	g.GET("/:id", h.get)
 	g.POST("/:id/export", h.requestExport)
+	g.POST("/:id/invitations", h.createInvitation)
+
+	invites := e.Group("/invitations")
+	invites.POST("/:token/accept", h.acceptInvitation)
+
+	portal := e.Group("/patient")
+	portal.GET("/context", h.portalContext)
+	portal.GET("/next-session", h.nextSession)
+	portal.GET("/pending-activities", h.pendingActivities)
+	portal.GET("/check-ins", h.checkins)
+	portal.POST("/check-ins", h.createPatientCheckin)
+	portal.GET("/process-summary", h.processSummary)
+}
+
+func (h *Handler) createInvitation(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "id inválido")
+	}
+	var req InvitationRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "corpo inválido")
+	}
+	result, err := h.svc.CreateInvitation(c.Request().Context(), id, req)
+	if err != nil {
+		if errors.Is(err, ErrPatientOnly) {
+			return echo.NewHTTPError(http.StatusForbidden, "acesso não permitido")
+		}
+		if errors.Is(err, ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "paciente não encontrado")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "não foi possível criar o convite")
+	}
+	return c.JSON(http.StatusCreated, result)
+}
+
+func (h *Handler) acceptInvitation(c echo.Context) error {
+	var req AcceptInvitationRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "corpo inválido")
+	}
+	result, err := h.svc.AcceptInvitation(c.Request().Context(), c.Param("token"), req)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "convite inválido ou expirado")
+	}
+	return c.JSON(http.StatusCreated, result)
+}
+
+func (h *Handler) portalContext(c echo.Context) error {
+	result, err := h.svc.PortalContext(c.Request().Context())
+	if err != nil {
+		return portalError(err)
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) nextSession(c echo.Context) error {
+	result, err := h.svc.NextSession(c.Request().Context())
+	if err != nil {
+		return portalError(err)
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) pendingActivities(c echo.Context) error {
+	result, err := h.svc.PendingActivities(c.Request().Context())
+	if err != nil {
+		return portalError(err)
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) checkins(c echo.Context) error {
+	result, err := h.svc.Checkins(c.Request().Context())
+	if err != nil {
+		return portalError(err)
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) createPatientCheckin(c echo.Context) error {
+	var req CheckinRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "corpo inválido")
+	}
+	result, err := h.svc.CreatePatientCheckin(c.Request().Context(), req)
+	if err != nil {
+		if errors.Is(err, ErrInvalidMood) {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		return portalError(err)
+	}
+	return c.JSON(http.StatusCreated, result)
+}
+
+func (h *Handler) processSummary(c echo.Context) error {
+	result, err := h.svc.ProcessSummary(c.Request().Context())
+	if err != nil {
+		return portalError(err)
+	}
+	return c.JSON(http.StatusOK, result)
 }
 
 func (h *Handler) requestExport(c echo.Context) error {

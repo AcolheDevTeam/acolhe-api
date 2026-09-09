@@ -11,6 +11,7 @@ import (
 )
 
 type Querier interface {
+	AcceptPatientRelationship(ctx context.Context, arg AcceptPatientRelationshipParams) error
 	// Conta agendamentos do psicólogo cujo intervalo se sobrepõe à janela informada.
 	// tstzrange(...) && tstzrange(...) testa interseção de intervalos.
 	// O service calcula window_end = scheduled_for + duration; assim a query só recebe timestamptz.
@@ -21,13 +22,24 @@ type Querier interface {
 	CreateCheckin(ctx context.Context, arg CreateCheckinParams) (Checkin, error)
 	CreateDocument(ctx context.Context, arg CreateDocumentParams) (CreateDocumentRow, error)
 	CreatePatient(ctx context.Context, arg CreatePatientParams) (CreatePatientRow, error)
+	CreatePatientCheckin(ctx context.Context, arg CreatePatientCheckinParams) (Checkin, error)
+	CreatePatientConsent(ctx context.Context, arg CreatePatientConsentParams) (uuid.UUID, error)
+	CreatePatientInvitation(ctx context.Context, arg CreatePatientInvitationParams) (CreatePatientInvitationRow, error)
+	CreatePatientUser(ctx context.Context, arg CreatePatientUserParams) (CreatePatientUserRow, error)
+	CreatePendingRelationship(ctx context.Context, arg CreatePendingRelationshipParams) (CreatePendingRelationshipRow, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (CreateSessionRow, error)
 	// patient_relationship não tem organization_id; o isolamento de org é feito
 	// pelo join em patient_profile (que carrega organization_id).
 	GetActiveRelationship(ctx context.Context, arg GetActiveRelationshipParams) (GetActiveRelationshipRow, error)
 	// Confirma que o assignment existe e pertence à organização (via paciente).
 	GetAssignmentInOrg(ctx context.Context, arg GetAssignmentInOrgParams) (GetAssignmentInOrgRow, error)
+	GetInvitationForAcceptance(ctx context.Context, tokenHash string) (GetInvitationForAcceptanceRow, error)
 	GetPatient(ctx context.Context, arg GetPatientParams) (GetPatientRow, error)
+	GetPatientNextAppointment(ctx context.Context, userID *uuid.UUID) (GetPatientNextAppointmentRow, error)
+	// All patient portal queries identify the patient from the authenticated user.
+	// No client-provided patient_id is accepted by this contract.
+	GetPatientPortalContext(ctx context.Context, userID *uuid.UUID) (GetPatientPortalContextRow, error)
+	GetPatientProcessSummary(ctx context.Context, userID *uuid.UUID) (GetPatientProcessSummaryRow, error)
 	// Timeline unificada do paciente: sessões + agendamentos + atividades.
 	// Isolamento multi-tenant via patient_profile.organization_id em cada ramo do UNION.
 	GetPatientTimeline(ctx context.Context, arg GetPatientTimelineParams) ([]GetPatientTimelineRow, error)
@@ -38,15 +50,19 @@ type Querier interface {
 	GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow, error)
 	HealthCheck(ctx context.Context) (int32, error)
+	LinkPatientUser(ctx context.Context, arg LinkPatientUserParams) error
 	// Templates da organização (organization_id pode ser nulo p/ templates globais).
 	ListActivityTemplates(ctx context.Context, organizationID *uuid.UUID) ([]ListActivityTemplatesRow, error)
 	ListAppointmentsByPsychologist(ctx context.Context, arg ListAppointmentsByPsychologistParams) ([]ListAppointmentsByPsychologistRow, error)
 	ListAssignmentsByPatient(ctx context.Context, arg ListAssignmentsByPatientParams) ([]ListAssignmentsByPatientRow, error)
 	ListCheckinsByPatient(ctx context.Context, arg ListCheckinsByPatientParams) ([]Checkin, error)
 	ListDocumentsByPatient(ctx context.Context, arg ListDocumentsByPatientParams) ([]ListDocumentsByPatientRow, error)
+	ListPatientCheckins(ctx context.Context, userID *uuid.UUID) ([]ListPatientCheckinsRow, error)
+	ListPatientPendingActivities(ctx context.Context, userID *uuid.UUID) ([]ListPatientPendingActivitiesRow, error)
 	ListPatientsByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListPatientsByOrgRow, error)
 	ListResponsesByAssignment(ctx context.Context, assignmentID uuid.UUID) ([]ListResponsesByAssignmentRow, error)
 	MarkAssignmentSubmitted(ctx context.Context, id uuid.UUID) error
+	MarkInvitationAccepted(ctx context.Context, id uuid.UUID) error
 	// Confirma que o paciente pertence à organização (usado antes de criar check-in).
 	PatientInOrg(ctx context.Context, arg PatientInOrgParams) (bool, error)
 	// Cria (submete) a resposta de uma atividade e marca o assignment como submitted.

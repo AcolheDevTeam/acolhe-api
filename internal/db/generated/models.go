@@ -226,6 +226,17 @@ type Organization struct {
 	UpdatedAt time.Time  `json:"updated_at"`
 }
 
+type PatientInvitation struct {
+	ID             uuid.UUID  `json:"id"`
+	PatientID      uuid.UUID  `json:"patient_id"`
+	RelationshipID uuid.UUID  `json:"relationship_id"`
+	Email          string     `json:"email"`
+	TokenHash      string     `json:"token_hash"`
+	ExpiresAt      time.Time  `json:"expires_at"`
+	AcceptedAt     *time.Time `json:"accepted_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+}
+
 type PatientProfile struct {
 	ID             uuid.UUID   `json:"id"`
 	UserID         *uuid.UUID  `json:"user_id"`

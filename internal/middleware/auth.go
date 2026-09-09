@@ -18,6 +18,10 @@ var publicPaths = map[string]bool{
 	"/login":  true,
 }
 
+func isPublicPath(path string) bool {
+	return publicPaths[path] || strings.HasPrefix(path, "/invitations/") && strings.HasSuffix(path, "/accept")
+}
+
 // claimsContextKey guarda as claims cruas para o middleware de tenant consumir.
 type claimsContextKey struct{}
 
@@ -28,7 +32,7 @@ var claimsKey claimsContextKey
 func Auth(secret string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			if publicPaths[c.Path()] {
+			if isPublicPath(c.Path()) {
 				return next(c)
 			}
 

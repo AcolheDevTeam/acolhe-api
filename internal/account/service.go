@@ -33,10 +33,18 @@ func NewService(q db.Querier, jwtSecret string) *Service {
 
 // User é a projeção pública de um usuário (sem hash de senha).
 type User struct {
-	ID             uuid.UUID  `json:"id"`
-	Email          string     `json:"email"`
-	Role           string     `json:"role"`
-	OrganizationID *uuid.UUID `json:"organizationId"`
+	ID             uuid.UUID       `json:"id"`
+	Email          string          `json:"email"`
+	Role           string          `json:"role"`
+	OrganizationID *uuid.UUID      `json:"organizationId"`
+	Patient        *PatientContext `json:"patient,omitempty"`
+}
+
+type PatientContext struct {
+	ID                 uuid.UUID `json:"id"`
+	FullName           string    `json:"fullName"`
+	RelationshipStatus string    `json:"relationshipStatus"`
+	Consented          bool      `json:"consented"`
 }
 
 // LoginResult carrega o token emitido e o usuário autenticado.
@@ -80,5 +88,17 @@ func (s *Service) Me(ctx context.Context) (*User, error) {
 	if err != nil {
 		return nil, ErrUserNotFound
 	}
-	return &User{ID: u.ID, Email: u.Email, Role: u.Role, OrganizationID: u.OrganizationID}, nil
+	user := &User{ID: u.ID, Email: u.Email, Role: u.Role, OrganizationID: u.OrganizationID}
+	if u.Role == "patient" {
+		row, err := tenant.Queries(ctx, s.q).GetPatientPortalContext(ctx, &id.UserID)
+		if err != nil {
+			return nil, ErrUserNotFound
+		}
+		user.Patient = &PatientContext{
+			ID: row.ID, FullName: row.FullName,
+			RelationshipStatus: row.RelationshipStatus,
+			Consented:          row.Consented,
+		}
+	}
+	return user, nil
 }

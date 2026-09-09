@@ -108,6 +108,17 @@ CREATE TABLE patient_relationship (
   created_at       timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE patient_invitation (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id       uuid NOT NULL REFERENCES patient_profile(id),
+  relationship_id  uuid NOT NULL REFERENCES patient_relationship(id),
+  email            text NOT NULL,
+  token_hash       text NOT NULL UNIQUE,
+  expires_at       timestamptz NOT NULL,
+  accepted_at      timestamptz,
+  created_at       timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE appointment (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id       uuid NOT NULL REFERENCES patient_profile(id),
@@ -434,6 +445,16 @@ CREATE POLICY patient_isolation ON patient_profile
       ELSE false
     END
   );
+
+CREATE POLICY appointment_patient_read ON appointment
+  FOR SELECT USING (patient_id IN (
+    SELECT id FROM patient_profile WHERE user_id = current_user_id()
+  ));
+
+CREATE POLICY session_patient_read ON session
+  FOR SELECT USING (patient_id IN (
+    SELECT id FROM patient_profile WHERE user_id = current_user_id()
+  ));
 
 -- Registro Documental: só o autor, sempre.
 CREATE POLICY documentary_record_author_only ON documentary_record

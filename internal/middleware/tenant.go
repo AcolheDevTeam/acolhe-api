@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -19,7 +20,7 @@ import (
 func Tenant() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			if publicPaths[c.Path()] {
+			if isPublicPath(c.Path()) {
 				return next(c)
 			}
 
@@ -41,10 +42,22 @@ func Tenant() echo.MiddlewareFunc {
 				}
 				id.OrgID = orgID
 			}
+			if id.Role == "patient" && psychologistOnlyPath(c.Path()) {
+				return echo.NewHTTPError(http.StatusForbidden, "acesso não permitido")
+			}
 
 			ctx := tenant.WithIdentity(c.Request().Context(), id)
 			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
 		}
 	}
+}
+
+func psychologistOnlyPath(path string) bool {
+	for _, prefix := range []string{"/patients", "/sessions", "/activities", "/checkins", "/appointments", "/documents"} {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }

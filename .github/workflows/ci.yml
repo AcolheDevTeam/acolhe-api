@@ -140,6 +140,26 @@ jobs:
           done
           exit $status
 
+  integration:
+    name: testes de integração (testcontainers)
+    # Todo teste que sobe Postgres com testcontainers está atrás de
+    # //go:build integration. Com o `go test ./...` do job acima, sem a tag,
+    # nenhum deles rodava — inclusive os de isolamento multi-tenant e os que
+    # pegavam o 503 do signup. Este job existe para a tag nunca mais ficar solta.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # O Docker do runner é o que o testcontainers usa para subir os Postgres.
+      - name: go test -tags integration
+        run: go test -tags integration ./...
+
   semgrep:
     name: Semgrep (multi-tenant)
     runs-on: ubuntu-latest

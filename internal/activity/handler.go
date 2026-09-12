@@ -28,14 +28,19 @@ func (h *Handler) Register(e *echo.Echo) {
 	g.GET("/:id", h.get)
 	g.PUT("/:id/review", h.review)
 	g.GET("/assignments", h.listAssignments) // ?patientId=...
-	g.POST("/assignments/:id/responses", h.submitResponse)
 	g.GET("/assignments/:id/responses", h.listResponses)
 
-	// Portal da paciente: o formulário da versão pinada, para responder.
-	// Fica no domínio activity porque é dado de atividade; o grupo /patient é
-	// compartilhado com internal/patient, que registra o resto do portal.
+	// Portal da paciente. Fica no domínio activity porque é dado de atividade; o
+	// grupo /patient é compartilhado com internal/patient, que registra o resto.
+	//
+	// A submissão precisa morar aqui, e não sob /activities: o guard de papel em
+	// middleware/tenant.go bloqueia todo prefixo /activities para pacientes, então
+	// POST /activities/assignments/:id/responses nunca foi alcançável por elas.
+	// Usar o prefixo que já é da paciente é mais seguro do que abrir exceção no
+	// guard, que é uma deny-list por prefixo.
 	portal := e.Group("/patient")
 	portal.GET("/activities/:id", h.patientActivity)
+	portal.POST("/activities/:id/responses", h.submitResponse)
 }
 
 func (h *Handler) assign(c echo.Context) error {

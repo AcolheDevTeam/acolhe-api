@@ -84,7 +84,7 @@ func New(pool *pgxpool.Pool, q db.Querier, queue *asynq.Client, jwtSecret string
 	})
 
 	// Domínios (mesmo padrão handler+service para todos).
-	account.NewHandler(account.NewService(q, jwtSecret)).Register(e)
+	account.NewHandler(account.NewService(q, jwtSecret, pool)).Register(e)
 	onboarding.NewHandler(onboarding.NewService(q)).Register(e)
 	patient.NewHandler(patient.NewService(q, queue, o.patient...)).Register(e)
 	session.NewHandler(session.NewService(q)).Register(e)

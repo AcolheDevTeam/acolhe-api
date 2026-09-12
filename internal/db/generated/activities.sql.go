@@ -13,6 +13,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const archiveActivityTemplate = `-- name: ArchiveActivityTemplate :execrows
+UPDATE activity_template
+SET is_archived = true, updated_at = now()
+WHERE id = $1
+  AND organization_id = $2
+  AND author_id = $3
+  AND is_archived = false
+`
+
+type ArchiveActivityTemplateParams struct {
+	ID             uuid.UUID  `json:"id"`
+	OrganizationID *uuid.UUID `json:"organization_id"`
+	AuthorID       uuid.UUID  `json:"author_id"`
+}
+
+func (q *Queries) ArchiveActivityTemplate(ctx context.Context, arg ArchiveActivityTemplateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, archiveActivityTemplate, arg.ID, arg.OrganizationID, arg.AuthorID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const claimAssignmentForSubmission = `-- name: ClaimAssignmentForSubmission :execrows
 UPDATE activity_assignment ag
 SET status = 'submitted', updated_at = now()
@@ -36,6 +59,129 @@ func (q *Queries) ClaimAssignmentForSubmission(ctx context.Context, arg ClaimAss
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const countAssignmentsByTemplate = `-- name: CountAssignmentsByTemplate :one
+SELECT count(*) FROM activity_assignment WHERE template_id = $1
+`
+
+func (q *Queries) CountAssignmentsByTemplate(ctx context.Context, templateID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countAssignmentsByTemplate, templateID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const createActivityField = `-- name: CreateActivityField :one
+INSERT INTO activity_field (template_id, code, label, field_type, config, display_order)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id
+`
+
+type CreateActivityFieldParams struct {
+	TemplateID   uuid.UUID `json:"template_id"`
+	Code         string    `json:"code"`
+	Label        string    `json:"label"`
+	FieldType    string    `json:"field_type"`
+	Config       []byte    `json:"config"`
+	DisplayOrder int32     `json:"display_order"`
+}
+
+func (q *Queries) CreateActivityField(ctx context.Context, arg CreateActivityFieldParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createActivityField,
+		arg.TemplateID,
+		arg.Code,
+		arg.Label,
+		arg.FieldType,
+		arg.Config,
+		arg.DisplayOrder,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const createActivityResponseValue = `-- name: CreateActivityResponseValue :exec
+INSERT INTO activity_response_value (
+  response_id, field_id, field_code,
+  value_text, value_number, value_boolean, value_datetime, value_json
+) VALUES (
+  $1, $2, $3,
+  $4, $5, $6, $7, $8
+)
+`
+
+type CreateActivityResponseValueParams struct {
+	ResponseID    uuid.UUID      `json:"response_id"`
+	FieldID       uuid.UUID      `json:"field_id"`
+	FieldCode     string         `json:"field_code"`
+	ValueText     *string        `json:"value_text"`
+	ValueNumber   pgtype.Numeric `json:"value_number"`
+	ValueBoolean  *bool          `json:"value_boolean"`
+	ValueDatetime *time.Time     `json:"value_datetime"`
+	ValueJson     []byte         `json:"value_json"`
+}
+
+// Uma linha por campo. Os triggers de 20260729072000 garantem coluna tipada única,
+// unicidade por campo e coerência com o template da atribuição.
+func (q *Queries) CreateActivityResponseValue(ctx context.Context, arg CreateActivityResponseValueParams) error {
+	_, err := q.db.Exec(ctx, createActivityResponseValue,
+		arg.ResponseID,
+		arg.FieldID,
+		arg.FieldCode,
+		arg.ValueText,
+		arg.ValueNumber,
+		arg.ValueBoolean,
+		arg.ValueDatetime,
+		arg.ValueJson,
+	)
+	return err
+}
+
+const createActivityTemplate = `-- name: CreateActivityTemplate :one
+INSERT INTO activity_template
+  (type_id, organization_id, author_id, parent_template_id, title, description, instructions, version)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, version, created_at, updated_at
+`
+
+type CreateActivityTemplateParams struct {
+	TypeID           uuid.UUID  `json:"type_id"`
+	OrganizationID   *uuid.UUID `json:"organization_id"`
+	AuthorID         uuid.UUID  `json:"author_id"`
+	ParentTemplateID *uuid.UUID `json:"parent_template_id"`
+	Title            string     `json:"title"`
+	Description      *string    `json:"description"`
+	Instructions     *string    `json:"instructions"`
+	Version          int32      `json:"version"`
+}
+
+type CreateActivityTemplateRow struct {
+	ID        uuid.UUID `json:"id"`
+	Version   int32     `json:"version"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (q *Queries) CreateActivityTemplate(ctx context.Context, arg CreateActivityTemplateParams) (CreateActivityTemplateRow, error) {
+	row := q.db.QueryRow(ctx, createActivityTemplate,
+		arg.TypeID,
+		arg.OrganizationID,
+		arg.AuthorID,
+		arg.ParentTemplateID,
+		arg.Title,
+		arg.Description,
+		arg.Instructions,
+		arg.Version,
+	)
+	var i CreateActivityTemplateRow
+	err := row.Scan(
+		&i.ID,
+		&i.Version,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const createAssignment = `-- name: CreateAssignment :one
@@ -88,6 +234,17 @@ func (q *Queries) CreateAssignment(ctx context.Context, arg CreateAssignmentPara
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const deleteActivityFields = `-- name: DeleteActivityFields :exec
+DELETE FROM activity_field WHERE template_id = $1
+`
+
+// Usado apenas na edição no lugar, quando o template nunca foi atribuído
+// (portanto não há activity_response_value apontando para os campos).
+func (q *Queries) DeleteActivityFields(ctx context.Context, templateID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteActivityFields, templateID)
+	return err
 }
 
 const getActivityReviewMetadata = `-- name: GetActivityReviewMetadata :one
@@ -164,6 +321,62 @@ func (q *Queries) GetActivityReviewMetadata(ctx context.Context, arg GetActivity
 	return i, err
 }
 
+const getActivityTemplateDetail = `-- name: GetActivityTemplateDetail :one
+SELECT t.id, t.title, ty.code AS type, t.description, t.instructions, t.version,
+       t.organization_id, t.author_id, t.parent_template_id, t.is_archived,
+       t.created_at, t.updated_at,
+       EXISTS (
+         SELECT 1 FROM activity_template child WHERE child.parent_template_id = t.id
+       ) AS superseded
+FROM activity_template t
+JOIN activity_type ty ON ty.id = t.type_id
+WHERE t.id = $1
+  AND (t.organization_id = $2 OR t.organization_id IS NULL)
+`
+
+type GetActivityTemplateDetailParams struct {
+	ID             uuid.UUID  `json:"id"`
+	OrganizationID *uuid.UUID `json:"organization_id"`
+}
+
+type GetActivityTemplateDetailRow struct {
+	ID               uuid.UUID  `json:"id"`
+	Title            string     `json:"title"`
+	Type             string     `json:"type"`
+	Description      *string    `json:"description"`
+	Instructions     *string    `json:"instructions"`
+	Version          int32      `json:"version"`
+	OrganizationID   *uuid.UUID `json:"organization_id"`
+	AuthorID         uuid.UUID  `json:"author_id"`
+	ParentTemplateID *uuid.UUID `json:"parent_template_id"`
+	IsArchived       bool       `json:"is_archived"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	Superseded       bool       `json:"superseded"`
+}
+
+// Detalhe de um template visível à organização (inclui arquivados e versões antigas).
+func (q *Queries) GetActivityTemplateDetail(ctx context.Context, arg GetActivityTemplateDetailParams) (GetActivityTemplateDetailRow, error) {
+	row := q.db.QueryRow(ctx, getActivityTemplateDetail, arg.ID, arg.OrganizationID)
+	var i GetActivityTemplateDetailRow
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Type,
+		&i.Description,
+		&i.Instructions,
+		&i.Version,
+		&i.OrganizationID,
+		&i.AuthorID,
+		&i.ParentTemplateID,
+		&i.IsArchived,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Superseded,
+	)
+	return i, err
+}
+
 const getActivityTemplateInOrg = `-- name: GetActivityTemplateInOrg :one
 SELECT t.id, t.title, ty.code AS type, t.version
 FROM activity_template t
@@ -171,6 +384,9 @@ JOIN activity_type ty ON ty.id = t.type_id
 WHERE t.id = $1
   AND (t.organization_id = $2 OR t.organization_id IS NULL)
   AND t.is_archived = false
+  AND NOT EXISTS (
+    SELECT 1 FROM activity_template child WHERE child.parent_template_id = t.id
+  )
 `
 
 type GetActivityTemplateInOrgParams struct {
@@ -185,6 +401,7 @@ type GetActivityTemplateInOrgRow struct {
 	Version int32     `json:"version"`
 }
 
+// Template atribuível: visível à organização, não arquivado e sem versão mais nova.
 func (q *Queries) GetActivityTemplateInOrg(ctx context.Context, arg GetActivityTemplateInOrgParams) (GetActivityTemplateInOrgRow, error) {
 	row := q.db.QueryRow(ctx, getActivityTemplateInOrg, arg.ID, arg.OrganizationID)
 	var i GetActivityTemplateInOrgRow
@@ -194,6 +411,23 @@ func (q *Queries) GetActivityTemplateInOrg(ctx context.Context, arg GetActivityT
 		&i.Type,
 		&i.Version,
 	)
+	return i, err
+}
+
+const getActivityTypeByCode = `-- name: GetActivityTypeByCode :one
+SELECT id, code, name FROM activity_type WHERE code = $1 AND is_active = true
+`
+
+type GetActivityTypeByCodeRow struct {
+	ID   uuid.UUID `json:"id"`
+	Code string    `json:"code"`
+	Name string    `json:"name"`
+}
+
+func (q *Queries) GetActivityTypeByCode(ctx context.Context, code string) (GetActivityTypeByCodeRow, error) {
+	row := q.db.QueryRow(ctx, getActivityTypeByCode, code)
+	var i GetActivityTypeByCodeRow
+	err := row.Scan(&i.ID, &i.Code, &i.Name)
 	return i, err
 }
 
@@ -286,6 +520,118 @@ func (q *Queries) GetAssignmentInOrg(ctx context.Context, arg GetAssignmentInOrg
 	return i, err
 }
 
+const getPatientAssignmentForResponse = `-- name: GetPatientAssignmentForResponse :one
+SELECT ag.id, ag.template_id, ag.template_version, ag.patient_id, ag.status,
+       ag.scheduled_for, ag.due_at,
+       t.title, t.description, t.instructions, t.version AS template_current_version,
+       ty.code AS type, ty.name AS type_name,
+       final.id AS response_id, final.submitted_at, final.submission_id
+FROM activity_assignment ag
+JOIN patient_profile p ON p.id = ag.patient_id
+JOIN activity_template t ON t.id = ag.template_id
+JOIN activity_type ty ON ty.id = t.type_id
+LEFT JOIN activity_response final ON final.assignment_id = ag.id AND NOT final.is_draft
+WHERE ag.id = $1
+  AND ag.patient_id = $2
+  AND p.organization_id = $3
+`
+
+type GetPatientAssignmentForResponseParams struct {
+	ID             uuid.UUID `json:"id"`
+	PatientID      uuid.UUID `json:"patient_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+}
+
+type GetPatientAssignmentForResponseRow struct {
+	ID                     uuid.UUID  `json:"id"`
+	TemplateID             uuid.UUID  `json:"template_id"`
+	TemplateVersion        int32      `json:"template_version"`
+	PatientID              uuid.UUID  `json:"patient_id"`
+	Status                 string     `json:"status"`
+	ScheduledFor           *time.Time `json:"scheduled_for"`
+	DueAt                  *time.Time `json:"due_at"`
+	Title                  string     `json:"title"`
+	Description            *string    `json:"description"`
+	Instructions           *string    `json:"instructions"`
+	TemplateCurrentVersion int32      `json:"template_current_version"`
+	Type                   string     `json:"type"`
+	TypeName               string     `json:"type_name"`
+	ResponseID             *uuid.UUID `json:"response_id"`
+	SubmittedAt            *time.Time `json:"submitted_at"`
+	SubmissionID           *uuid.UUID `json:"submission_id"`
+}
+
+// Atribuição da própria paciente, com o template pinado e a resposta final, se houver.
+// Sem assigner_id: aqui quem lê é a paciente, não a psicóloga.
+func (q *Queries) GetPatientAssignmentForResponse(ctx context.Context, arg GetPatientAssignmentForResponseParams) (GetPatientAssignmentForResponseRow, error) {
+	row := q.db.QueryRow(ctx, getPatientAssignmentForResponse, arg.ID, arg.PatientID, arg.OrganizationID)
+	var i GetPatientAssignmentForResponseRow
+	err := row.Scan(
+		&i.ID,
+		&i.TemplateID,
+		&i.TemplateVersion,
+		&i.PatientID,
+		&i.Status,
+		&i.ScheduledFor,
+		&i.DueAt,
+		&i.Title,
+		&i.Description,
+		&i.Instructions,
+		&i.TemplateCurrentVersion,
+		&i.Type,
+		&i.TypeName,
+		&i.ResponseID,
+		&i.SubmittedAt,
+		&i.SubmissionID,
+	)
+	return i, err
+}
+
+const listActivityFields = `-- name: ListActivityFields :many
+SELECT id, template_id, code, label, field_type, config, display_order
+FROM activity_field
+WHERE template_id = $1
+ORDER BY display_order, id
+`
+
+type ListActivityFieldsRow struct {
+	ID           uuid.UUID `json:"id"`
+	TemplateID   uuid.UUID `json:"template_id"`
+	Code         string    `json:"code"`
+	Label        string    `json:"label"`
+	FieldType    string    `json:"field_type"`
+	Config       []byte    `json:"config"`
+	DisplayOrder int32     `json:"display_order"`
+}
+
+func (q *Queries) ListActivityFields(ctx context.Context, templateID uuid.UUID) ([]ListActivityFieldsRow, error) {
+	rows, err := q.db.Query(ctx, listActivityFields, templateID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActivityFieldsRow
+	for rows.Next() {
+		var i ListActivityFieldsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TemplateID,
+			&i.Code,
+			&i.Label,
+			&i.FieldType,
+			&i.Config,
+			&i.DisplayOrder,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listActivityReviewValues = `-- name: ListActivityReviewValues :many
 SELECT field.id AS field_id, field.code AS field_code, field.label,
        field.field_type, field.config, field.display_order,
@@ -371,24 +717,37 @@ func (q *Queries) ListActivityReviewValues(ctx context.Context, arg ListActivity
 }
 
 const listActivityTemplates = `-- name: ListActivityTemplates :many
-SELECT t.id, t.title, ty.code AS type, t.description, t.version, t.created_at
+SELECT t.id, t.title, ty.code AS type, t.description, t.instructions, t.version,
+       (t.organization_id IS NULL)::boolean AS is_global,
+       t.author_id, t.created_at, t.updated_at,
+       (SELECT count(*)::integer FROM activity_field f WHERE f.template_id = t.id) AS field_count
 FROM activity_template t
 JOIN activity_type ty ON ty.id = t.type_id
 WHERE (t.organization_id = $1 OR t.organization_id IS NULL)
   AND t.is_archived = false
+  AND NOT EXISTS (
+    SELECT 1 FROM activity_template child WHERE child.parent_template_id = t.id
+  )
 ORDER BY t.title
 `
 
 type ListActivityTemplatesRow struct {
-	ID          uuid.UUID `json:"id"`
-	Title       string    `json:"title"`
-	Type        string    `json:"type"`
-	Description *string   `json:"description"`
-	Version     int32     `json:"version"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID           uuid.UUID `json:"id"`
+	Title        string    `json:"title"`
+	Type         string    `json:"type"`
+	Description  *string   `json:"description"`
+	Instructions *string   `json:"instructions"`
+	Version      int32     `json:"version"`
+	IsGlobal     bool      `json:"is_global"`
+	AuthorID     uuid.UUID `json:"author_id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	FieldCount   int32     `json:"field_count"`
 }
 
-// Templates da organização (organization_id pode ser nulo p/ templates globais).
+// Biblioteca visível à organização: templates dela + globais (organization_id nulo),
+// só a versão mais recente de cada linhagem (sem filho em parent_template_id) e
+// não arquivados.
 func (q *Queries) ListActivityTemplates(ctx context.Context, organizationID *uuid.UUID) ([]ListActivityTemplatesRow, error) {
 	rows, err := q.db.Query(ctx, listActivityTemplates, organizationID)
 	if err != nil {
@@ -403,8 +762,13 @@ func (q *Queries) ListActivityTemplates(ctx context.Context, organizationID *uui
 			&i.Title,
 			&i.Type,
 			&i.Description,
+			&i.Instructions,
 			&i.Version,
+			&i.IsGlobal,
+			&i.AuthorID,
 			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FieldCount,
 		); err != nil {
 			return nil, err
 		}
@@ -637,37 +1001,77 @@ func (q *Queries) MarkCompleteAssignmentReviewed(ctx context.Context, arg MarkCo
 	return result.RowsAffected(), nil
 }
 
-const submitResponse = `-- name: SubmitResponse :one
-INSERT INTO activity_response (assignment_id, submitted_at, is_draft, summary_score)
-VALUES ($1, now(), false, $2)
-RETURNING id, assignment_id, submitted_at, is_draft, summary_score, created_at
+const submitTypedResponse = `-- name: SubmitTypedResponse :one
+INSERT INTO activity_response (assignment_id, submission_id, submitted_at, is_draft, summary_score)
+VALUES ($1, $2, now(), false, $3)
+RETURNING id, assignment_id, submission_id, submitted_at, is_draft, summary_score, created_at
 `
 
-type SubmitResponseParams struct {
+type SubmitTypedResponseParams struct {
 	AssignmentID uuid.UUID      `json:"assignment_id"`
+	SubmissionID *uuid.UUID     `json:"submission_id"`
 	SummaryScore pgtype.Numeric `json:"summary_score"`
 }
 
-type SubmitResponseRow struct {
+type SubmitTypedResponseRow struct {
 	ID           uuid.UUID      `json:"id"`
 	AssignmentID uuid.UUID      `json:"assignment_id"`
+	SubmissionID *uuid.UUID     `json:"submission_id"`
 	SubmittedAt  *time.Time     `json:"submitted_at"`
 	IsDraft      bool           `json:"is_draft"`
 	SummaryScore pgtype.Numeric `json:"summary_score"`
 	CreatedAt    time.Time      `json:"created_at"`
 }
 
-// Cria (submete) a resposta de uma atividade e marca o assignment como submitted.
-func (q *Queries) SubmitResponse(ctx context.Context, arg SubmitResponseParams) (SubmitResponseRow, error) {
-	row := q.db.QueryRow(ctx, submitResponse, arg.AssignmentID, arg.SummaryScore)
-	var i SubmitResponseRow
+// Cria a resposta final. O submission_id vem do cliente e permite replay idempotente.
+func (q *Queries) SubmitTypedResponse(ctx context.Context, arg SubmitTypedResponseParams) (SubmitTypedResponseRow, error) {
+	row := q.db.QueryRow(ctx, submitTypedResponse, arg.AssignmentID, arg.SubmissionID, arg.SummaryScore)
+	var i SubmitTypedResponseRow
 	err := row.Scan(
 		&i.ID,
 		&i.AssignmentID,
+		&i.SubmissionID,
 		&i.SubmittedAt,
 		&i.IsDraft,
 		&i.SummaryScore,
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const updateActivityTemplateInPlace = `-- name: UpdateActivityTemplateInPlace :execrows
+UPDATE activity_template
+SET type_id = $1, title = $2, description = $3,
+    instructions = $4, updated_at = now()
+WHERE id = $5
+  AND organization_id = $6
+  AND author_id = $7
+  AND is_archived = false
+`
+
+type UpdateActivityTemplateInPlaceParams struct {
+	TypeID         uuid.UUID  `json:"type_id"`
+	Title          string     `json:"title"`
+	Description    *string    `json:"description"`
+	Instructions   *string    `json:"instructions"`
+	ID             uuid.UUID  `json:"id"`
+	OrganizationID *uuid.UUID `json:"organization_id"`
+	AuthorID       uuid.UUID  `json:"author_id"`
+}
+
+// Edição no lugar: só a autora, na própria organização, e nunca em template arquivado.
+func (q *Queries) UpdateActivityTemplateInPlace(ctx context.Context, arg UpdateActivityTemplateInPlaceParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateActivityTemplateInPlace,
+		arg.TypeID,
+		arg.Title,
+		arg.Description,
+		arg.Instructions,
+		arg.ID,
+		arg.OrganizationID,
+		arg.AuthorID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

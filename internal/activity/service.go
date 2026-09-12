@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	db "github.com/joycesilva/acolhe-api/internal/db/generated"
 	"github.com/joycesilva/acolhe-api/internal/tenant"
@@ -49,44 +48,6 @@ type Response struct {
 	SubmittedAt  *time.Time `json:"submittedAt"`
 	IsDraft      bool       `json:"isDraft"`
 	CreatedAt    time.Time  `json:"createdAt"`
-}
-
-// Submit registra a resposta de uma atribuição e a marca como submetida.
-// As duas escritas rodam na mesma transação da requisição (TenantTx).
-func (s *Service) Submit(ctx context.Context, assignmentID uuid.UUID) (*Response, error) {
-	id, ok := tenant.FromContext(ctx)
-	if !ok || id.Role != "patient" {
-		return nil, ErrPatientRequired
-	}
-	q := tenant.Queries(ctx, s.q)
-	patient, err := q.GetPatientByUserInOrg(ctx, db.GetPatientByUserInOrgParams{
-		UserID: &id.UserID, OrganizationID: id.OrgID,
-	})
-	if err != nil {
-		return nil, ErrPatientRequired
-	}
-	assignment, err := q.GetAssignmentInOrg(ctx, db.GetAssignmentInOrgParams{ID: assignmentID, OrganizationID: id.OrgID})
-	if err != nil || assignment.PatientID != patient.ID {
-		return nil, ErrAssignmentNotFound
-	}
-	claimed, err := q.ClaimAssignmentForSubmission(ctx, db.ClaimAssignmentForSubmissionParams{
-		ID: assignmentID, PatientID: patient.ID, OrganizationID: id.OrgID,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if claimed != 1 {
-		return nil, ErrSubmissionNotAllowed
-	}
-
-	row, err := q.SubmitResponse(ctx, db.SubmitResponseParams{
-		AssignmentID: assignmentID,
-		SummaryScore: pgtype.Numeric{}, // sem pontuação automática neste passo
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &Response{ID: row.ID, AssignmentID: row.AssignmentID, SubmittedAt: row.SubmittedAt, IsDraft: row.IsDraft, CreatedAt: row.CreatedAt}, nil
 }
 
 // ListResponses devolve as respostas de uma atribuição (isolada por org).
@@ -129,12 +90,17 @@ func (s *Service) ListResponses(ctx context.Context, assignmentID uuid.UUID) ([]
 
 // Template é a projeção pública de um template de atividade.
 type Template struct {
-	ID          uuid.UUID `json:"id"`
-	Title       string    `json:"title"`
-	Type        string    `json:"type"`
-	Description *string   `json:"description"`
-	Version     int32     `json:"version"`
-	CreatedAt   time.Time `json:"createdAt"`
+	ID           uuid.UUID `json:"id"`
+	Title        string    `json:"title"`
+	Type         string    `json:"type"`
+	Description  *string   `json:"description"`
+	Instructions *string   `json:"instructions"`
+	Version      int32     `json:"version"`
+	IsGlobal     bool      `json:"isGlobal"`
+	OwnedByMe    bool      `json:"ownedByMe"`
+	FieldCount   int32     `json:"fieldCount"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 // Assignment é a projeção pública de uma atribuição de atividade.
@@ -243,19 +209,32 @@ func (s *Service) Assign(ctx context.Context, req AssignRequest) (*Assignment, e
 	}, nil
 }
 
-// ListTemplates devolve os templates visíveis à organização (+ globais).
+// ListTemplates devolve a biblioteca visível à organização (+ globais): só a
+// versão mais recente de cada linhagem e sem arquivados.
 func (s *Service) ListTemplates(ctx context.Context) ([]Template, error) {
-	orgID, err := tenant.OrgID(ctx)
-	if err != nil {
-		return nil, err
+	id, ok := tenant.FromContext(ctx)
+	if !ok {
+		return nil, tenant.ErrNoTenant
 	}
-	rows, err := tenant.Queries(ctx, s.q).ListActivityTemplates(ctx, &orgID)
+	q := tenant.Queries(ctx, s.q)
+	var psyID uuid.UUID
+	if id.Role == "psychologist" {
+		if psy, err := q.GetPsychologistByUser(ctx, id.UserID); err == nil {
+			psyID = psy.ID
+		}
+	}
+	rows, err := q.ListActivityTemplates(ctx, &id.OrgID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Template, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, Template{ID: r.ID, Title: r.Title, Type: r.Type, Description: r.Description, Version: r.Version, CreatedAt: r.CreatedAt})
+		out = append(out, Template{
+			ID: r.ID, Title: r.Title, Type: r.Type, Description: r.Description,
+			Instructions: r.Instructions, Version: r.Version, IsGlobal: r.IsGlobal,
+			OwnedByMe:  !r.IsGlobal && psyID != uuid.Nil && r.AuthorID == psyID,
+			FieldCount: r.FieldCount, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		})
 	}
 	return out, nil
 }

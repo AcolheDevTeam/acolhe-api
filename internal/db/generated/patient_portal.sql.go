@@ -103,7 +103,7 @@ type GetPatientPortalContextRow struct {
 	Status             string    `json:"status"`
 	OrganizationID     uuid.UUID `json:"organization_id"`
 	RelationshipID     uuid.UUID `json:"relationship_id"`
-	RelationshipStatus string     `json:"relationship_status"`
+	RelationshipStatus string    `json:"relationship_status"`
 	Consented          bool      `json:"consented"`
 }
 

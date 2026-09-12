@@ -1,19 +1,90 @@
 -- name: ListActivityTemplates :many
--- Templates da organização (organization_id pode ser nulo p/ templates globais).
-SELECT t.id, t.title, ty.code AS type, t.description, t.version, t.created_at
+-- Biblioteca visível à organização: templates dela + globais (organization_id nulo),
+-- só a versão mais recente de cada linhagem (sem filho em parent_template_id) e
+-- não arquivados.
+SELECT t.id, t.title, ty.code AS type, t.description, t.instructions, t.version,
+       (t.organization_id IS NULL)::boolean AS is_global,
+       t.author_id, t.created_at, t.updated_at,
+       (SELECT count(*)::integer FROM activity_field f WHERE f.template_id = t.id) AS field_count
 FROM activity_template t
 JOIN activity_type ty ON ty.id = t.type_id
 WHERE (t.organization_id = @organization_id OR t.organization_id IS NULL)
   AND t.is_archived = false
+  AND NOT EXISTS (
+    SELECT 1 FROM activity_template child WHERE child.parent_template_id = t.id
+  )
 ORDER BY t.title;
 
 -- name: GetActivityTemplateInOrg :one
+-- Template atribuível: visível à organização, não arquivado e sem versão mais nova.
 SELECT t.id, t.title, ty.code AS type, t.version
 FROM activity_template t
 JOIN activity_type ty ON ty.id = t.type_id
 WHERE t.id = @id
   AND (t.organization_id = @organization_id OR t.organization_id IS NULL)
-  AND t.is_archived = false;
+  AND t.is_archived = false
+  AND NOT EXISTS (
+    SELECT 1 FROM activity_template child WHERE child.parent_template_id = t.id
+  );
+
+-- name: GetActivityTemplateDetail :one
+-- Detalhe de um template visível à organização (inclui arquivados e versões antigas).
+SELECT t.id, t.title, ty.code AS type, t.description, t.instructions, t.version,
+       t.organization_id, t.author_id, t.parent_template_id, t.is_archived,
+       t.created_at, t.updated_at,
+       EXISTS (
+         SELECT 1 FROM activity_template child WHERE child.parent_template_id = t.id
+       ) AS superseded
+FROM activity_template t
+JOIN activity_type ty ON ty.id = t.type_id
+WHERE t.id = @id
+  AND (t.organization_id = @organization_id OR t.organization_id IS NULL);
+
+-- name: ListActivityFields :many
+SELECT id, template_id, code, label, field_type, config, display_order
+FROM activity_field
+WHERE template_id = @template_id
+ORDER BY display_order, id;
+
+-- name: GetActivityTypeByCode :one
+SELECT id, code, name FROM activity_type WHERE code = @code AND is_active = true;
+
+-- name: CreateActivityTemplate :one
+INSERT INTO activity_template
+  (type_id, organization_id, author_id, parent_template_id, title, description, instructions, version)
+VALUES (@type_id, @organization_id, @author_id, @parent_template_id, @title, @description, @instructions, @version)
+RETURNING id, version, created_at, updated_at;
+
+-- name: CreateActivityField :one
+INSERT INTO activity_field (template_id, code, label, field_type, config, display_order)
+VALUES (@template_id, @code, @label, @field_type, @config, @display_order)
+RETURNING id;
+
+-- name: UpdateActivityTemplateInPlace :execrows
+-- Edição no lugar: só a autora, na própria organização, e nunca em template arquivado.
+UPDATE activity_template
+SET type_id = @type_id, title = @title, description = @description,
+    instructions = @instructions, updated_at = now()
+WHERE id = @id
+  AND organization_id = @organization_id
+  AND author_id = @author_id
+  AND is_archived = false;
+
+-- name: DeleteActivityFields :exec
+-- Usado apenas na edição no lugar, quando o template nunca foi atribuído
+-- (portanto não há activity_response_value apontando para os campos).
+DELETE FROM activity_field WHERE template_id = @template_id;
+
+-- name: CountAssignmentsByTemplate :one
+SELECT count(*) FROM activity_assignment WHERE template_id = @template_id;
+
+-- name: ArchiveActivityTemplate :execrows
+UPDATE activity_template
+SET is_archived = true, updated_at = now()
+WHERE id = @id
+  AND organization_id = @organization_id
+  AND author_id = @author_id
+  AND is_archived = false;
 
 -- name: ListAssignmentsByPatient :many
 SELECT ag.id, ag.template_id, ag.patient_id, p.full_name AS patient_name,
@@ -142,12 +213,6 @@ WHERE ag.id = @id
   AND ag.status = 'submitted'
   AND activity_submission_is_complete(ag.id);
 
--- name: SubmitResponse :one
--- Cria (submete) a resposta de uma atividade e marca o assignment como submitted.
-INSERT INTO activity_response (assignment_id, submitted_at, is_draft, summary_score)
-VALUES (@assignment_id, now(), false, @summary_score)
-RETURNING id, assignment_id, submitted_at, is_draft, summary_score, created_at;
-
 -- name: ClaimAssignmentForSubmission :execrows
 UPDATE activity_assignment ag
 SET status = 'submitted', updated_at = now()
@@ -167,3 +232,37 @@ SELECT id, assignment_id, submitted_at, is_draft, summary_score, created_at
 FROM activity_response
 WHERE assignment_id = @assignment_id
 ORDER BY created_at DESC;
+
+-- name: GetPatientAssignmentForResponse :one
+-- Atribuição da própria paciente, com o template pinado e a resposta final, se houver.
+-- Sem assigner_id: aqui quem lê é a paciente, não a psicóloga.
+SELECT ag.id, ag.template_id, ag.template_version, ag.patient_id, ag.status,
+       ag.scheduled_for, ag.due_at,
+       t.title, t.description, t.instructions, t.version AS template_current_version,
+       ty.code AS type, ty.name AS type_name,
+       final.id AS response_id, final.submitted_at, final.submission_id
+FROM activity_assignment ag
+JOIN patient_profile p ON p.id = ag.patient_id
+JOIN activity_template t ON t.id = ag.template_id
+JOIN activity_type ty ON ty.id = t.type_id
+LEFT JOIN activity_response final ON final.assignment_id = ag.id AND NOT final.is_draft
+WHERE ag.id = @id
+  AND ag.patient_id = @patient_id
+  AND p.organization_id = @organization_id;
+
+-- name: SubmitTypedResponse :one
+-- Cria a resposta final. O submission_id vem do cliente e permite replay idempotente.
+INSERT INTO activity_response (assignment_id, submission_id, submitted_at, is_draft, summary_score)
+VALUES (@assignment_id, @submission_id, now(), false, @summary_score)
+RETURNING id, assignment_id, submission_id, submitted_at, is_draft, summary_score, created_at;
+
+-- name: CreateActivityResponseValue :exec
+-- Uma linha por campo. Os triggers de 20260729072000 garantem coluna tipada única,
+-- unicidade por campo e coerência com o template da atribuição.
+INSERT INTO activity_response_value (
+  response_id, field_id, field_code,
+  value_text, value_number, value_boolean, value_datetime, value_json
+) VALUES (
+  @response_id, @field_id, @field_code,
+  @value_text, @value_number, @value_boolean, @value_datetime, @value_json
+);

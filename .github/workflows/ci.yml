@@ -54,6 +54,112 @@ jobs:
       - name: go test
         run: go test ./...
 
+  migrations:
+    name: migrations (integridade + aplicação)
+    # Os testes de integração aplicam internal/db/schema.sql direto (testcontainers),
+    # então o diretório de migrations não é exercitado por eles. Este job cobre isso:
+    # integridade do atlas.sum, aplicação num banco novo e ordem linear em relação ao
+    # que já está publicado em staging/produção.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGHOST: 127.0.0.1
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      # fetch-depth: 0 traz origin/main e origin/develop, comparados no último passo.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Instalar Atlas
+        run: |
+          curl -fsSL https://release.ariga.io/atlas/atlas-linux-amd64-latest -o /usr/local/bin/atlas
+          chmod +x /usr/local/bin/atlas
+
+      # Pega arquivo adicionado/alterado sem rodar `atlas migrate hash`.
+      - name: Integridade do diretório (atlas.sum)
+        run: atlas migrate validate --dir file://internal/db/migrations
+
+      # Pega erro de SQL. Equivale a subir um ambiente do zero.
+      - name: Aplicar num banco novo
+        run: |
+          set -euo pipefail
+          psql -c 'CREATE DATABASE fresh'
+          atlas migrate apply \
+            --dir file://internal/db/migrations \
+            --url 'postgres://postgres:postgres@127.0.0.1:5432/fresh?sslmode=disable'
+
+      # Pega migration adicionada fora de ordem. O Atlas recusa um arquivo que ordene
+      # antes da última já aplicada no ambiente, mas isso só aparece contra um banco com
+      # revisões — no CI não temos um. A checagem equivalente é por nome: um arquivo novo
+      # precisa ordenar depois da última migration que já está publicada em main/develop.
+      # Sem isto o PR passa verde e o deploy quebra na VM, derrubando api e worker
+      # (depends_on: migrate: service_completed_successfully).
+      #
+      # Comparar por nome, e não replicando o diretório da base num banco, é de propósito:
+      # se a base estiver quebrada, o PR que a conserta não pode ficar barrado por ela.
+      - name: Ordem linear das migrations (staging e produção)
+        run: |
+          set -euo pipefail
+          status=0
+          sqls() { git ls-tree --name-only "$1" internal/db/migrations/ 2>/dev/null \
+            | sed 's|.*/||' | grep '\.sql$' | sort || true; }
+          head_files="$(sqls HEAD)"
+          for ref in main develop; do
+            base_files="$(sqls "origin/$ref")"
+            if [ -z "$base_files" ]; then
+              echo "::notice::origin/$ref não tem migrations — pulando"
+              continue
+            fi
+            last_base="$(printf '%s\n' "$base_files" | tail -1)"
+            echo "origin/$ref — última migration publicada: $last_base"
+            for f in $head_files; do
+              # Só arquivos novos importam: os que já estão na base já foram aplicados.
+              if printf '%s\n' "$base_files" | grep -qxF "$f"; then
+                continue
+              fi
+              if [[ "$f" < "$last_base" ]]; then
+                echo "::error file=internal/db/migrations/$f::$f ordena antes de $last_base, que já está publicada em origin/$ref. Renomeie com um timestamp posterior e rode 'atlas migrate hash'."
+                status=1
+              else
+                echo "  ok: $f entra depois de $last_base"
+              fi
+            done
+          done
+          exit $status
+
+  integration:
+    name: testes de integração (testcontainers)
+    # Todo teste que sobe Postgres com testcontainers está atrás de
+    # //go:build integration. Com o `go test ./...` do job acima, sem a tag,
+    # nenhum deles rodava — inclusive os de isolamento multi-tenant e os que
+    # pegavam o 503 do signup. Este job existe para a tag nunca mais ficar solta.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # O Docker do runner é o que o testcontainers usa para subir os Postgres.
+      - name: go test -tags integration
+        run: go test -tags integration ./...
+
   semgrep:
     name: Semgrep (multi-tenant)
     runs-on: ubuntu-latest

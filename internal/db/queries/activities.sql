@@ -213,12 +213,6 @@ WHERE ag.id = @id
   AND ag.status = 'submitted'
   AND activity_submission_is_complete(ag.id);
 
--- name: SubmitResponse :one
--- Cria (submete) a resposta de uma atividade e marca o assignment como submitted.
-INSERT INTO activity_response (assignment_id, submitted_at, is_draft, summary_score)
-VALUES (@assignment_id, now(), false, @summary_score)
-RETURNING id, assignment_id, submitted_at, is_draft, summary_score, created_at;
-
 -- name: ClaimAssignmentForSubmission :execrows
 UPDATE activity_assignment ag
 SET status = 'submitted', updated_at = now()
@@ -238,3 +232,37 @@ SELECT id, assignment_id, submitted_at, is_draft, summary_score, created_at
 FROM activity_response
 WHERE assignment_id = @assignment_id
 ORDER BY created_at DESC;
+
+-- name: GetPatientAssignmentForResponse :one
+-- Atribuição da própria paciente, com o template pinado e a resposta final, se houver.
+-- Sem assigner_id: aqui quem lê é a paciente, não a psicóloga.
+SELECT ag.id, ag.template_id, ag.template_version, ag.patient_id, ag.status,
+       ag.scheduled_for, ag.due_at,
+       t.title, t.description, t.instructions, t.version AS template_current_version,
+       ty.code AS type, ty.name AS type_name,
+       final.id AS response_id, final.submitted_at, final.submission_id
+FROM activity_assignment ag
+JOIN patient_profile p ON p.id = ag.patient_id
+JOIN activity_template t ON t.id = ag.template_id
+JOIN activity_type ty ON ty.id = t.type_id
+LEFT JOIN activity_response final ON final.assignment_id = ag.id AND NOT final.is_draft
+WHERE ag.id = @id
+  AND ag.patient_id = @patient_id
+  AND p.organization_id = @organization_id;
+
+-- name: SubmitTypedResponse :one
+-- Cria a resposta final. O submission_id vem do cliente e permite replay idempotente.
+INSERT INTO activity_response (assignment_id, submission_id, submitted_at, is_draft, summary_score)
+VALUES (@assignment_id, @submission_id, now(), false, @summary_score)
+RETURNING id, assignment_id, submission_id, submitted_at, is_draft, summary_score, created_at;
+
+-- name: CreateActivityResponseValue :exec
+-- Uma linha por campo. Os triggers de 20260729072000 garantem coluna tipada única,
+-- unicidade por campo e coerência com o template da atribuição.
+INSERT INTO activity_response_value (
+  response_id, field_id, field_code,
+  value_text, value_number, value_boolean, value_datetime, value_json
+) VALUES (
+  @response_id, @field_id, @field_code,
+  @value_text, @value_number, @value_boolean, @value_datetime, @value_json
+);

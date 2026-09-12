@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	db "github.com/joycesilva/acolhe-api/internal/db/generated"
 	"github.com/joycesilva/acolhe-api/internal/tenant"
@@ -49,44 +48,6 @@ type Response struct {
 	SubmittedAt  *time.Time `json:"submittedAt"`
 	IsDraft      bool       `json:"isDraft"`
 	CreatedAt    time.Time  `json:"createdAt"`
-}
-
-// Submit registra a resposta de uma atribuição e a marca como submetida.
-// As duas escritas rodam na mesma transação da requisição (TenantTx).
-func (s *Service) Submit(ctx context.Context, assignmentID uuid.UUID) (*Response, error) {
-	id, ok := tenant.FromContext(ctx)
-	if !ok || id.Role != "patient" {
-		return nil, ErrPatientRequired
-	}
-	q := tenant.Queries(ctx, s.q)
-	patient, err := q.GetPatientByUserInOrg(ctx, db.GetPatientByUserInOrgParams{
-		UserID: &id.UserID, OrganizationID: id.OrgID,
-	})
-	if err != nil {
-		return nil, ErrPatientRequired
-	}
-	assignment, err := q.GetAssignmentInOrg(ctx, db.GetAssignmentInOrgParams{ID: assignmentID, OrganizationID: id.OrgID})
-	if err != nil || assignment.PatientID != patient.ID {
-		return nil, ErrAssignmentNotFound
-	}
-	claimed, err := q.ClaimAssignmentForSubmission(ctx, db.ClaimAssignmentForSubmissionParams{
-		ID: assignmentID, PatientID: patient.ID, OrganizationID: id.OrgID,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if claimed != 1 {
-		return nil, ErrSubmissionNotAllowed
-	}
-
-	row, err := q.SubmitResponse(ctx, db.SubmitResponseParams{
-		AssignmentID: assignmentID,
-		SummaryScore: pgtype.Numeric{}, // sem pontuação automática neste passo
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &Response{ID: row.ID, AssignmentID: row.AssignmentID, SubmittedAt: row.SubmittedAt, IsDraft: row.IsDraft, CreatedAt: row.CreatedAt}, nil
 }
 
 // ListResponses devolve as respostas de uma atribuição (isolada por org).

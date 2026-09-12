@@ -1,4 +1,4 @@
-h1:qUUHknM7GkGwdutY//8ZRtIa9Dv6jsrgOzfPPo1+CNM=
+h1:X8M4B3gXE4k9Wfjc61IREjXiAPDuKSA3ZSwybO5v4fY=
 20260529120000_baseline.sql h1:ByTjg/JkoMvwaDFFkYERvKB5UlGiRBM/wQCp8Fln1bQ=
 20260529235643_add_checkin.sql h1:ZvYa6ocQrpHv6Y9AtOaCXcGBxWD5QHhZWdAS2wnMt04=
 20260728190000_add_clinical_rls_policies.sql h1:4IDWbG2EKltEwA5gKj1Yvq9WanlCjih9ZdUbpgNJ1zs=
@@ -10,3 +10,4 @@ h1:qUUHknM7GkGwdutY//8ZRtIa9Dv6jsrgOzfPPo1+CNM=
 20260805210000_fix_public_invitation_rls.sql h1:Ju/+QfS4WnuSNhnRUCAKjaeQudoIzXP4mr52LMsxkW8=
 20260909210000_seed_activity_types.sql h1:iVAFdd+RCObN1PC2P4aDw1jYnet4gxVumpzMADMvtKs=
 20260912150000_add_psychologist_signup_consents.sql h1:12Kho/gb+kRyau+ocE5V5hL0ps5u2icdPj5mVCkZSPM=
+20260912170000_add_activity_submission_id.sql h1:Yp27cXWiQqZ3tDiTIs0as+b5/Thz/C0w7p5pwog4toc=

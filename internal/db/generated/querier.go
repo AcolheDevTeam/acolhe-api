@@ -20,6 +20,9 @@ type Querier interface {
 	CountAppointmentConflicts(ctx context.Context, arg CountAppointmentConflictsParams) (int64, error)
 	CountAssignmentsByTemplate(ctx context.Context, templateID uuid.UUID) (int64, error)
 	CreateActivityField(ctx context.Context, arg CreateActivityFieldParams) (uuid.UUID, error)
+	// Uma linha por campo. Os triggers de 20260729072000 garantem coluna tipada única,
+	// unicidade por campo e coerência com o template da atribuição.
+	CreateActivityResponseValue(ctx context.Context, arg CreateActivityResponseValueParams) error
 	CreateActivityTemplate(ctx context.Context, arg CreateActivityTemplateParams) (CreateActivityTemplateRow, error)
 	CreateAppointment(ctx context.Context, arg CreateAppointmentParams) (CreateAppointmentRow, error)
 	CreateAssignment(ctx context.Context, arg CreateAssignmentParams) (CreateAssignmentRow, error)
@@ -55,6 +58,9 @@ type Querier interface {
 	GetLGPDExportRequest(ctx context.Context, arg GetLGPDExportRequestParams) (LgpdExportRequest, error)
 	GetLGPDExportSLAMetric(ctx context.Context, organizationID uuid.UUID) (LgpdExportSlaMetric, error)
 	GetPatient(ctx context.Context, arg GetPatientParams) (GetPatientRow, error)
+	// Atribuição da própria paciente, com o template pinado e a resposta final, se houver.
+	// Sem assigner_id: aqui quem lê é a paciente, não a psicóloga.
+	GetPatientAssignmentForResponse(ctx context.Context, arg GetPatientAssignmentForResponseParams) (GetPatientAssignmentForResponseRow, error)
 	GetPatientByUserInOrg(ctx context.Context, arg GetPatientByUserInOrgParams) (GetPatientByUserInOrgRow, error)
 	GetPatientExportAccess(ctx context.Context, arg GetPatientExportAccessParams) (GetPatientExportAccessRow, error)
 	GetPatientForPsychologist(ctx context.Context, arg GetPatientForPsychologistParams) (GetPatientForPsychologistRow, error)
@@ -104,8 +110,8 @@ type Querier interface {
 	// Confirma que o paciente pertence à organização (usado antes de criar check-in).
 	PatientInOrg(ctx context.Context, arg PatientInOrgParams) (bool, error)
 	ReissuePatientInvitation(ctx context.Context, arg ReissuePatientInvitationParams) (ReissuePatientInvitationRow, error)
-	// Cria (submete) a resposta de uma atividade e marca o assignment como submitted.
-	SubmitResponse(ctx context.Context, arg SubmitResponseParams) (SubmitResponseRow, error)
+	// Cria a resposta final. O submission_id vem do cliente e permite replay idempotente.
+	SubmitTypedResponse(ctx context.Context, arg SubmitTypedResponseParams) (SubmitTypedResponseRow, error)
 	// Edição no lugar: só a autora, na própria organização, e nunca em template arquivado.
 	UpdateActivityTemplateInPlace(ctx context.Context, arg UpdateActivityTemplateInPlaceParams) (int64, error)
 	UpdateAppointmentStatus(ctx context.Context, arg UpdateAppointmentStatusParams) (UpdateAppointmentStatusRow, error)

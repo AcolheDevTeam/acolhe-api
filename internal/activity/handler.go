@@ -30,6 +30,12 @@ func (h *Handler) Register(e *echo.Echo) {
 	g.GET("/assignments", h.listAssignments) // ?patientId=...
 	g.POST("/assignments/:id/responses", h.submitResponse)
 	g.GET("/assignments/:id/responses", h.listResponses)
+
+	// Portal da paciente: o formulário da versão pinada, para responder.
+	// Fica no domínio activity porque é dado de atividade; o grupo /patient é
+	// compartilhado com internal/patient, que registra o resto do portal.
+	portal := e.Group("/patient")
+	portal.GET("/activities/:id", h.patientActivity)
 }
 
 func (h *Handler) assign(c echo.Context) error {
@@ -120,20 +126,45 @@ func (h *Handler) submitResponse(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "id inválido")
 	}
-	resp, err := h.svc.Submit(c.Request().Context(), assignmentID)
+	var req SubmissionRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "corpo inválido")
+	}
+	resp, err := h.svc.SubmitTyped(c.Request().Context(), assignmentID, req)
 	if err != nil {
-		if errors.Is(err, ErrPatientRequired) {
-			return echo.NewHTTPError(http.StatusForbidden, err.Error())
-		}
-		if errors.Is(err, ErrSubmissionNotAllowed) {
-			return echo.NewHTTPError(http.StatusConflict, err.Error())
-		}
-		if errors.Is(err, ErrAssignmentNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, err.Error())
-		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "falha ao submeter resposta")
+		return submissionError(err)
 	}
 	return c.JSON(http.StatusCreated, resp)
+}
+
+func (h *Handler) patientActivity(c echo.Context) error {
+	assignmentID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "id inválido")
+	}
+	detail, err := h.svc.PatientActivity(c.Request().Context(), assignmentID)
+	if err != nil {
+		return submissionError(err)
+	}
+	return c.JSON(http.StatusOK, detail)
+}
+
+// submissionError mapeia os erros do fluxo da paciente. A mensagem de validação
+// vai inteira para a tela: ela nomeia a pergunta e o motivo (regra A6 do guia).
+func submissionError(err error) error {
+	switch {
+	case errors.Is(err, ErrInvalidSubmission):
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrPatientRequired):
+		return echo.NewHTTPError(http.StatusForbidden, err.Error())
+	case errors.Is(err, ErrAssignmentNotFound):
+		return echo.NewHTTPError(http.StatusNotFound, err.Error())
+	case errors.Is(err, ErrSubmissionNotAllowed), errors.Is(err, ErrAlreadySubmitted),
+		errors.Is(err, ErrSubmissionVersionMismatch), errors.Is(err, ErrTemplateWithoutFields):
+		return echo.NewHTTPError(http.StatusConflict, err.Error())
+	default:
+		return echo.NewHTTPError(http.StatusInternalServerError, "falha ao submeter resposta")
+	}
 }
 
 func (h *Handler) listResponses(c echo.Context) error {

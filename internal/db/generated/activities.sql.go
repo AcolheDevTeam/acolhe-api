@@ -101,6 +101,43 @@ func (q *Queries) CreateActivityField(ctx context.Context, arg CreateActivityFie
 	return id, err
 }
 
+const createActivityResponseValue = `-- name: CreateActivityResponseValue :exec
+INSERT INTO activity_response_value (
+  response_id, field_id, field_code,
+  value_text, value_number, value_boolean, value_datetime, value_json
+) VALUES (
+  $1, $2, $3,
+  $4, $5, $6, $7, $8
+)
+`
+
+type CreateActivityResponseValueParams struct {
+	ResponseID    uuid.UUID      `json:"response_id"`
+	FieldID       uuid.UUID      `json:"field_id"`
+	FieldCode     string         `json:"field_code"`
+	ValueText     *string        `json:"value_text"`
+	ValueNumber   pgtype.Numeric `json:"value_number"`
+	ValueBoolean  *bool          `json:"value_boolean"`
+	ValueDatetime *time.Time     `json:"value_datetime"`
+	ValueJson     []byte         `json:"value_json"`
+}
+
+// Uma linha por campo. Os triggers de 20260729072000 garantem coluna tipada única,
+// unicidade por campo e coerência com o template da atribuição.
+func (q *Queries) CreateActivityResponseValue(ctx context.Context, arg CreateActivityResponseValueParams) error {
+	_, err := q.db.Exec(ctx, createActivityResponseValue,
+		arg.ResponseID,
+		arg.FieldID,
+		arg.FieldCode,
+		arg.ValueText,
+		arg.ValueNumber,
+		arg.ValueBoolean,
+		arg.ValueDatetime,
+		arg.ValueJson,
+	)
+	return err
+}
+
 const createActivityTemplate = `-- name: CreateActivityTemplate :one
 INSERT INTO activity_template
   (type_id, organization_id, author_id, parent_template_id, title, description, instructions, version)
@@ -479,6 +516,73 @@ func (q *Queries) GetAssignmentInOrg(ctx context.Context, arg GetAssignmentInOrg
 		&i.PatientID,
 		&i.AssignerID,
 		&i.Status,
+	)
+	return i, err
+}
+
+const getPatientAssignmentForResponse = `-- name: GetPatientAssignmentForResponse :one
+SELECT ag.id, ag.template_id, ag.template_version, ag.patient_id, ag.status,
+       ag.scheduled_for, ag.due_at,
+       t.title, t.description, t.instructions, t.version AS template_current_version,
+       ty.code AS type, ty.name AS type_name,
+       final.id AS response_id, final.submitted_at, final.submission_id
+FROM activity_assignment ag
+JOIN patient_profile p ON p.id = ag.patient_id
+JOIN activity_template t ON t.id = ag.template_id
+JOIN activity_type ty ON ty.id = t.type_id
+LEFT JOIN activity_response final ON final.assignment_id = ag.id AND NOT final.is_draft
+WHERE ag.id = $1
+  AND ag.patient_id = $2
+  AND p.organization_id = $3
+`
+
+type GetPatientAssignmentForResponseParams struct {
+	ID             uuid.UUID `json:"id"`
+	PatientID      uuid.UUID `json:"patient_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+}
+
+type GetPatientAssignmentForResponseRow struct {
+	ID                     uuid.UUID  `json:"id"`
+	TemplateID             uuid.UUID  `json:"template_id"`
+	TemplateVersion        int32      `json:"template_version"`
+	PatientID              uuid.UUID  `json:"patient_id"`
+	Status                 string     `json:"status"`
+	ScheduledFor           *time.Time `json:"scheduled_for"`
+	DueAt                  *time.Time `json:"due_at"`
+	Title                  string     `json:"title"`
+	Description            *string    `json:"description"`
+	Instructions           *string    `json:"instructions"`
+	TemplateCurrentVersion int32      `json:"template_current_version"`
+	Type                   string     `json:"type"`
+	TypeName               string     `json:"type_name"`
+	ResponseID             *uuid.UUID `json:"response_id"`
+	SubmittedAt            *time.Time `json:"submitted_at"`
+	SubmissionID           *uuid.UUID `json:"submission_id"`
+}
+
+// Atribuição da própria paciente, com o template pinado e a resposta final, se houver.
+// Sem assigner_id: aqui quem lê é a paciente, não a psicóloga.
+func (q *Queries) GetPatientAssignmentForResponse(ctx context.Context, arg GetPatientAssignmentForResponseParams) (GetPatientAssignmentForResponseRow, error) {
+	row := q.db.QueryRow(ctx, getPatientAssignmentForResponse, arg.ID, arg.PatientID, arg.OrganizationID)
+	var i GetPatientAssignmentForResponseRow
+	err := row.Scan(
+		&i.ID,
+		&i.TemplateID,
+		&i.TemplateVersion,
+		&i.PatientID,
+		&i.Status,
+		&i.ScheduledFor,
+		&i.DueAt,
+		&i.Title,
+		&i.Description,
+		&i.Instructions,
+		&i.TemplateCurrentVersion,
+		&i.Type,
+		&i.TypeName,
+		&i.ResponseID,
+		&i.SubmittedAt,
+		&i.SubmissionID,
 	)
 	return i, err
 }
@@ -897,33 +1001,36 @@ func (q *Queries) MarkCompleteAssignmentReviewed(ctx context.Context, arg MarkCo
 	return result.RowsAffected(), nil
 }
 
-const submitResponse = `-- name: SubmitResponse :one
-INSERT INTO activity_response (assignment_id, submitted_at, is_draft, summary_score)
-VALUES ($1, now(), false, $2)
-RETURNING id, assignment_id, submitted_at, is_draft, summary_score, created_at
+const submitTypedResponse = `-- name: SubmitTypedResponse :one
+INSERT INTO activity_response (assignment_id, submission_id, submitted_at, is_draft, summary_score)
+VALUES ($1, $2, now(), false, $3)
+RETURNING id, assignment_id, submission_id, submitted_at, is_draft, summary_score, created_at
 `
 
-type SubmitResponseParams struct {
+type SubmitTypedResponseParams struct {
 	AssignmentID uuid.UUID      `json:"assignment_id"`
+	SubmissionID *uuid.UUID     `json:"submission_id"`
 	SummaryScore pgtype.Numeric `json:"summary_score"`
 }
 
-type SubmitResponseRow struct {
+type SubmitTypedResponseRow struct {
 	ID           uuid.UUID      `json:"id"`
 	AssignmentID uuid.UUID      `json:"assignment_id"`
+	SubmissionID *uuid.UUID     `json:"submission_id"`
 	SubmittedAt  *time.Time     `json:"submitted_at"`
 	IsDraft      bool           `json:"is_draft"`
 	SummaryScore pgtype.Numeric `json:"summary_score"`
 	CreatedAt    time.Time      `json:"created_at"`
 }
 
-// Cria (submete) a resposta de uma atividade e marca o assignment como submitted.
-func (q *Queries) SubmitResponse(ctx context.Context, arg SubmitResponseParams) (SubmitResponseRow, error) {
-	row := q.db.QueryRow(ctx, submitResponse, arg.AssignmentID, arg.SummaryScore)
-	var i SubmitResponseRow
+// Cria a resposta final. O submission_id vem do cliente e permite replay idempotente.
+func (q *Queries) SubmitTypedResponse(ctx context.Context, arg SubmitTypedResponseParams) (SubmitTypedResponseRow, error) {
+	row := q.db.QueryRow(ctx, submitTypedResponse, arg.AssignmentID, arg.SubmissionID, arg.SummaryScore)
+	var i SubmitTypedResponseRow
 	err := row.Scan(
 		&i.ID,
 		&i.AssignmentID,
+		&i.SubmissionID,
 		&i.SubmittedAt,
 		&i.IsDraft,
 		&i.SummaryScore,

@@ -284,6 +284,7 @@ CREATE TABLE activity_assignment (
 CREATE TABLE activity_response (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   assignment_id uuid NOT NULL REFERENCES activity_assignment(id),
+  submission_id uuid,                                -- gerado pelo cliente; replay idempotente
   submitted_at  timestamptz,
   is_draft      boolean NOT NULL DEFAULT true,
   summary_score numeric,
@@ -473,6 +474,9 @@ CREATE INDEX idx_assignment_due ON activity_assignment (due_at)
 CREATE INDEX idx_assignment_recurrence_parent ON activity_assignment (recurrence_parent_id)
   WHERE recurrence_parent_id IS NOT NULL;
 CREATE INDEX idx_response_assignment ON activity_response (assignment_id);
+CREATE UNIQUE INDEX activity_response_submission_id_key
+  ON activity_response (submission_id)
+  WHERE submission_id IS NOT NULL;
 CREATE INDEX idx_response_value_response ON activity_response_value (response_id);
 CREATE INDEX idx_response_value_field ON activity_response_value (field_id);
 CREATE INDEX idx_response_value_field_time ON activity_response_value (field_id, response_id);

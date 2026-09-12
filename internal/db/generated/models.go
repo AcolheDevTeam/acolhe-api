@@ -50,6 +50,7 @@ type ActivityField struct {
 type ActivityResponse struct {
 	ID           uuid.UUID      `json:"id"`
 	AssignmentID uuid.UUID      `json:"assignment_id"`
+	SubmissionID *uuid.UUID     `json:"submission_id"`
 	SubmittedAt  *time.Time     `json:"submitted_at"`
 	IsDraft      bool           `json:"is_draft"`
 	SummaryScore pgtype.Numeric `json:"summary_score"`

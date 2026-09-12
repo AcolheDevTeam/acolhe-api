@@ -113,13 +113,24 @@ func TestPatientInvitationLoginMeAndPortalIsolation(t *testing.T) {
 		loginResult.Token, map[string]any{"mood": 4, "patientId": otherPatientID})
 	require.Equal(t, http.StatusCreated, createdCheckin.StatusCode)
 	var checkinResult struct {
-		ID        uuid.UUID `json:"id"`
-		PatientID uuid.UUID `json:"patientId"`
+		ID uuid.UUID `json:"id"`
 	}
 	require.NoError(t, json.NewDecoder(createdCheckin.Body).Decode(&checkinResult))
 	require.NoError(t, createdCheckin.Body.Close())
-	assert.Equal(t, patientID, checkinResult.PatientID,
+
+	// A projeção do portal (patient.PatientCheckin) não expõe patientId de
+	// propósito: o check-in é sempre do paciente do JWT. Conferir a propriedade
+	// pelo corpo da resposta dava falso negativo — o dono real está no banco.
+	var checkinOwnerID uuid.UUID
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT patient_id FROM checkin WHERE id = $1`, checkinResult.ID).Scan(&checkinOwnerID))
+	assert.Equal(t, patientID, checkinOwnerID,
 		"check-in deve usar o paciente do JWT, não um patientId informado")
+
+	var otherCheckins int
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT count(*) FROM checkin WHERE patient_id = $1`, otherPatientID).Scan(&otherCheckins))
+	assert.Zero(t, otherCheckins, "nenhum check-in pode ser escrito no paciente de outra org")
 
 	denied := doJSON(t, srv.Client(), http.MethodGet, srv.URL+"/sessions?patientId="+uuid.NewString(), loginResult.Token, nil)
 	require.Equal(t, http.StatusForbidden, denied.StatusCode)

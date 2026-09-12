@@ -150,27 +150,48 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*SignupResult, er
 	orgID := uuid.New()
 	userID := uuid.New()
 	psyID := uuid.New()
-	result, err := tx.Exec(ctx, `
-		INSERT INTO organization (id, name, slug, status)
-		VALUES ($1, $2, $3, 'active');
-		INSERT INTO "user" (id, organization_id, email, password_hash, role, status)
-		VALUES ($4, $1, $5, $6, 'psychologist', 'active');
-		INSERT INTO psychologist_profile (id, user_id, full_name, crp_number, crp_state, crp_status, approach, cpf_encrypted)
-		VALUES ($7, $4, $8, $9, $10, 'pending', NULLIF($11, ''), $12);
+	// Um Exec por comando: o pgx usa o protocolo estendido, que recusa múltiplos
+	// comandos num mesmo statement preparado (SQLSTATE 42601). Agrupar os INSERT
+	// numa única string fazia todo cadastro falhar. A atomicidade vem da
+	// transação, não do agrupamento.
+	inserts := []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO organization (id, name, slug, status)
+		  VALUES ($1, $2, $3, 'active')`,
+			[]any{orgID, "Clínica de " + in.FullName, "psicologo-" + orgID.String()}},
+		{`INSERT INTO "user" (id, organization_id, email, password_hash, role, status)
+		  VALUES ($1, $2, $3, $4, 'psychologist', 'active')`,
+			[]any{userID, orgID, in.Email, hash}},
+		{`INSERT INTO psychologist_profile (id, user_id, full_name, crp_number, crp_state, crp_status, approach, cpf_encrypted)
+		  VALUES ($1, $2, $3, $4, $5, 'pending', NULLIF($6, ''), $7)`,
+			[]any{psyID, userID, in.FullName, in.CRPNumber, in.CRPState, in.Approach, cpf}},
+	}
+	for _, insert := range inserts {
+		if _, err := tx.Exec(ctx, insert.sql, insert.args...); err != nil {
+			if isSignupConflict(err) {
+				return nil, ErrSignupConflict
+			}
+			return nil, ErrSignupUnavailable
+		}
+	}
+
+	consents, err := tx.Exec(ctx, `
 		INSERT INTO consent (user_id, document_id, accepted, ip_address)
-		SELECT $4, d.id, true, $14
+		SELECT $1, d.id, true, $3
 		FROM consent_document d
-		WHERE d.scope IN ('terms_of_use', 'privacy_policy') AND d.version = $13;`,
-		orgID, "Clínica de "+in.FullName, "psicologo-"+orgID.String(), userID,
-		in.Email, hash, psyID, in.FullName, in.CRPNumber, in.CRPState, in.Approach,
-		cpf, signupTermsVersion, ipValue(in.IPAddress))
+		WHERE d.scope IN ('terms_of_use', 'privacy_policy') AND d.version = $2`,
+		userID, signupTermsVersion, ipValue(in.IPAddress))
 	if err != nil {
 		if isSignupConflict(err) {
 			return nil, ErrSignupConflict
 		}
 		return nil, ErrSignupUnavailable
 	}
-	if result.RowsAffected() != 2 {
+	// Os dois documentos da versão corrente precisam existir e ter sido aceitos:
+	// sem terms_of_use e privacy_policy o cadastro não tem base legal.
+	if consents.RowsAffected() != 2 {
 		return nil, ErrSignupUnavailable
 	}
 	if err := tx.Commit(ctx); err != nil {

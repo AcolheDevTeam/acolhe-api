@@ -84,7 +84,15 @@ func seedSession(t *testing.T, pool *pgxpool.Pool) (orgID, userID, patientID uui
 		`INSERT INTO patient_profile (organization_id, full_name) VALUES ($1, 'Paciente Org1') RETURNING id`,
 		orgID).Scan(&patientID))
 
+	// O gate de consentimento (migration 20260729011635) exige vínculo ativo antes
+	// de qualquer sessão. Mesmo padrão das fixtures de internal/app.
 	_, err := pool.Exec(ctx,
+		`INSERT INTO patient_relationship (
+		   patient_id, psychologist_id, status, requires_health_consent
+		 ) VALUES ($1, $2, 'active', false)`, patientID, psyID)
+	require.NoError(t, err)
+
+	_, err = pool.Exec(ctx,
 		`INSERT INTO session (patient_id, psychologist_id, occurred_at, status)
 		 VALUES ($1, $2, now(), 'completed')`, patientID, psyID)
 	require.NoError(t, err)

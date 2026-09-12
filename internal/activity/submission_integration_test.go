@@ -10,7 +10,11 @@
 package activity_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -20,6 +24,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/joycesilva/acolhe-api/internal/activity"
+	"github.com/joycesilva/acolhe-api/internal/app"
+	"github.com/joycesilva/acolhe-api/internal/auth"
 	db "github.com/joycesilva/acolhe-api/internal/db/generated"
 	"github.com/joycesilva/acolhe-api/internal/tenant"
 )
@@ -27,6 +33,11 @@ import (
 // seedPatientUser liga um patient_profile a um usuário e devolve o contexto da
 // paciente autenticada, que é quem responde.
 func seedPatientUser(t *testing.T, pool *pgxpool.Pool, orgID, patientID uuid.UUID, email string) context.Context {
+	ctx, _ := seedPatientUserWithID(t, pool, orgID, patientID, email)
+	return ctx
+}
+
+func seedPatientUserWithID(t *testing.T, pool *pgxpool.Pool, orgID, patientID uuid.UUID, email string) (context.Context, uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
 	var userID uuid.UUID
@@ -36,7 +47,7 @@ func seedPatientUser(t *testing.T, pool *pgxpool.Pool, orgID, patientID uuid.UUI
 	_, err := pool.Exec(ctx,
 		`UPDATE patient_profile SET user_id = $1 WHERE id = $2`, userID, patientID)
 	require.NoError(t, err)
-	return tenant.WithIdentity(ctx, tenant.Identity{OrgID: orgID, UserID: userID, Role: "patient"})
+	return tenant.WithIdentity(ctx, tenant.Identity{OrgID: orgID, UserID: userID, Role: "patient"}), userID
 }
 
 // assignRPD cria o template de exemplo, atribui à paciente e devolve os ids.
@@ -289,4 +300,63 @@ func TestSubmitTyped_SomentePaciente(t *testing.T) {
 
 	_, err = svc.PatientActivity(psi.ctx, assignmentID)
 	require.ErrorIs(t, err, activity.ErrPatientRequired)
+}
+
+// TestSubmissionRouteReachableByPatient roda pelo HTTP real, com o middleware de
+// papel no caminho — que é onde o bug estava. O guard de middleware/tenant.go
+// bloqueia todo prefixo /activities para pacientes, então a rota de submissão
+// precisa morar sob /patient. Teste de serviço não pega isso: ele não passa pelo
+// roteamento.
+func TestSubmissionRouteReachableByPatient(t *testing.T) {
+	pool := setupDB(t)
+	svc := activity.NewService(db.New(pool))
+	psi := seedPsychologist(t, pool, "org-rota", "psi@rota.dev", "208")
+	patientID := seedActivePatient(t, pool, psi)
+	_, patientUserID := seedPatientUserWithID(t, pool, psi.orgID, patientID, "paciente@rota.dev")
+	assignmentID, template := assignRPD(t, svc, psi, patientID)
+
+	srv := httptest.NewServer(app.New(pool, db.New(pool), nil, "secret").Handler())
+	t.Cleanup(srv.Close)
+
+	token, err := auth.GenerateToken("secret", patientUserID.String(), "patient", psi.orgID.String())
+	require.NoError(t, err)
+
+	post := func(path string, payload any) *http.Response {
+		body, marshalErr := json.Marshal(payload)
+		require.NoError(t, marshalErr)
+		req, reqErr := http.NewRequest(http.MethodPost, srv.URL+path, bytes.NewReader(body))
+		require.NoError(t, reqErr)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, doErr := srv.Client().Do(req)
+		require.NoError(t, doErr)
+		return resp
+	}
+
+	// O caminho antigo continua barrado para a paciente pelo guard de papel.
+	antiga := post("/activities/assignments/"+assignmentID.String()+"/responses",
+		respostaValida(uuid.New(), template))
+	defer antiga.Body.Close()
+	assert.Equal(t, http.StatusForbidden, antiga.StatusCode,
+		"prefixo /activities segue bloqueado para pacientes")
+
+	// O formulário e a submissão, sob /patient, funcionam.
+	form, err := srv.Client().Do(func() *http.Request {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/patient/activities/"+assignmentID.String(), nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		return req
+	}())
+	require.NoError(t, err)
+	defer form.Body.Close()
+	require.Equal(t, http.StatusOK, form.StatusCode)
+
+	enviada := post("/patient/activities/"+assignmentID.String()+"/responses",
+		respostaValida(uuid.New(), template))
+	defer enviada.Body.Close()
+	require.Equal(t, http.StatusCreated, enviada.StatusCode)
+
+	var status string
+	require.NoError(t, pool.QueryRow(context.Background(),
+		`SELECT status FROM activity_assignment WHERE id = $1`, assignmentID).Scan(&status))
+	assert.Equal(t, "submitted", status)
 }

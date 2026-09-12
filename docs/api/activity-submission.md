@@ -44,9 +44,14 @@ Erros: `403` sem papel de paciente, `404` atribuição inexistente ou de outra
 paciente/organização, `409` se o template foi editado e a versão pinada não é mais
 a atual (`recarregue o formulário`).
 
-## `POST /activities/assignments/:id/responses`
+## `POST /patient/activities/:id/responses`
 
 Envio final. Não existe rascunho no servidor neste escopo.
+
+Mora sob `/patient` e não sob `/activities` de propósito: o guard de papel em
+`internal/middleware/tenant.go` bloqueia todo prefixo `/activities` para pacientes.
+Usar o prefixo que já é da paciente é mais seguro do que abrir exceção num guard
+que é uma deny-list por prefixo.
 
 ```json
 {

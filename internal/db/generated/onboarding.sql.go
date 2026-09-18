@@ -242,6 +242,7 @@ const listPublishedConsentDocuments = `-- name: ListPublishedConsentDocuments :m
 SELECT id, scope, version, title, content, content_sha256, required, published_at
 FROM consent_document
 WHERE published_at <= now() AND retired_at IS NULL
+  AND scope IN ('health_data', 'communications', 'aggregate_statistics')
 ORDER BY required DESC, published_at, scope
 `
 
@@ -256,6 +257,9 @@ type ListPublishedConsentDocumentsRow struct {
 	PublishedAt   time.Time `json:"published_at"`
 }
 
+// Só os escopos do aceite da paciente. Os documentos de cadastro do psicólogo
+// ('terms_of_use', 'privacy_policy') vivem na mesma tabela e não podem vazar
+// para a tela do convite.
 func (q *Queries) ListPublishedConsentDocuments(ctx context.Context) ([]ListPublishedConsentDocumentsRow, error) {
 	rows, err := q.db.Query(ctx, listPublishedConsentDocuments)
 	if err != nil {

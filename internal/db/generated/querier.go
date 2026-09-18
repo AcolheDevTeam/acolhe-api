@@ -97,6 +97,9 @@ type Querier interface {
 	ListPatientPendingActivities(ctx context.Context, userID *uuid.UUID) ([]ListPatientPendingActivitiesRow, error)
 	ListPatientsByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListPatientsByOrgRow, error)
 	ListPatientsByPsychologist(ctx context.Context, arg ListPatientsByPsychologistParams) ([]ListPatientsByPsychologistRow, error)
+	// Só os escopos do aceite da paciente. Os documentos de cadastro do psicólogo
+	// ('terms_of_use', 'privacy_policy') vivem na mesma tabela e não podem vazar
+	// para a tela do convite.
 	ListPublishedConsentDocuments(ctx context.Context) ([]ListPublishedConsentDocumentsRow, error)
 	ListResponsesByAssignment(ctx context.Context, assignmentID uuid.UUID) ([]ListResponsesByAssignmentRow, error)
 	LockPatientCreationKey(ctx context.Context, idempotencyKey string) (interface{}, error)

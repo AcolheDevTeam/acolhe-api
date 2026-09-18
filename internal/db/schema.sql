@@ -683,9 +683,13 @@ BEGIN
   SELECT * INTO profile FROM patient_profile
   WHERE id = invitation.patient_id FOR UPDATE;
 
+  -- Só os documentos do aceite da paciente entram na exigência. Os documentos
+  -- de cadastro do psicólogo ('terms_of_use', 'privacy_policy') moram na mesma
+  -- tabela, nunca são oferecidos no convite e travariam todo aceite.
   IF EXISTS (
     SELECT 1 FROM consent_document d
     WHERE d.required AND d.published_at <= now() AND d.retired_at IS NULL
+      AND d.scope IN ('health_data', 'communications', 'aggregate_statistics')
       AND NOT (d.id = ANY(accepted_document_ids))
   ) THEN
     RAISE EXCEPTION 'required consent missing' USING ERRCODE = '23514';
@@ -710,7 +714,8 @@ BEGIN
   FROM consent_document d
   WHERE d.id = ANY(accepted_document_ids)
     AND d.published_at <= now()
-    AND d.retired_at IS NULL;
+    AND d.retired_at IS NULL
+    AND d.scope IN ('health_data', 'communications', 'aggregate_statistics');
 
   SELECT c.id INTO health_consent_id
   FROM consent c

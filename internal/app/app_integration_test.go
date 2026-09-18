@@ -84,7 +84,13 @@ func setupPool(t *testing.T) *pgxpool.Pool {
 		    ('communications', '0.3', 'Comunicações',
 		     'Receber lembretes de sessão e atividades por e-mail (sem conteúdo sensível no corpo da mensagem).', false),
 		    ('aggregate_statistics', '0.3', 'Estatística agregada',
-		     'Uso anônimo do Acolhe para métricas operacionais. Nunca cruzado com dados clínicos.', false)
+		     'Uso anônimo do Acolhe para métricas operacionais. Nunca cruzado com dados clínicos.', false),
+		    -- Documentos do cadastro do psicólogo: moram na mesma tabela e não
+		    -- podem aparecer no convite da paciente (ver assertiva abaixo).
+		    ('terms_of_use', '0.3', 'Termos de Uso',
+		     'Termos de Uso do Acolhe para cadastro e uso da plataforma.', true),
+		    ('privacy_policy', '0.3', 'Política de Privacidade',
+		     'Política de Privacidade do Acolhe para tratamento de dados no cadastro.', true)
 		)
 		INSERT INTO consent_document (
 		  scope, version, title, content, content_sha256, required, published_at
@@ -263,16 +269,23 @@ func TestClinicalBFFContracts_FullStack(t *testing.T) {
 	var invitation struct {
 		Documents []struct {
 			ID       uuid.UUID `json:"id"`
+			Scope    string    `json:"scope"`
 			Required bool      `json:"required"`
 		} `json:"documents"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&invitation))
 	require.NoError(t, resp.Body.Close())
 	var acceptedDocumentIDs []uuid.UUID
+	var scopes []string
 	for _, document := range invitation.Documents {
 		acceptedDocumentIDs = append(acceptedDocumentIDs, document.ID)
+		scopes = append(scopes, document.Scope)
 	}
 	require.NotEmpty(t, acceptedDocumentIDs)
+	// O convite expõe só os escopos da paciente. Os documentos de cadastro do
+	// psicólogo vazando aqui quebram o contrato do BFF e derrubam a tela.
+	assert.ElementsMatch(t,
+		[]string{"health_data", "communications", "aggregate_statistics"}, scopes)
 
 	resp = doJSON(t, srv.Client(), http.MethodPost,
 		srv.URL+"/onboarding/invitations/"+patient.Invitation.Token+"/accept", "", map[string]any{

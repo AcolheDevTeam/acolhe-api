@@ -27,6 +27,7 @@ func (h *Handler) Register(e *echo.Echo) {
 	portal.GET("/pending-activities", h.pendingActivities)
 	portal.GET("/check-ins", h.checkins)
 	portal.POST("/check-ins", h.createPatientCheckin)
+	portal.PUT("/check-ins/:id", h.updatePatientCheckin)
 	portal.GET("/process-summary", h.processSummary)
 }
 
@@ -87,6 +88,22 @@ func (h *Handler) createPatientCheckin(c echo.Context) error {
 		return portalError(err)
 	}
 	return c.JSON(http.StatusCreated, result)
+}
+
+func (h *Handler) updatePatientCheckin(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "check-in inválido")
+	}
+	var req CheckinRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "dados do check-in inválidos")
+	}
+	result, err := h.svc.UpdatePatientCheckin(c.Request().Context(), id, req)
+	if err != nil {
+		return portalError(err)
+	}
+	return c.JSON(http.StatusOK, result)
 }
 
 func (h *Handler) processSummary(c echo.Context) error {

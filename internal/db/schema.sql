@@ -334,10 +334,14 @@ CREATE TABLE checkin (
   patient_id  uuid NOT NULL REFERENCES patient_profile(id),
   mood        integer NOT NULL CHECK (mood BETWEEN 1 AND 5),
   note        text,
-  created_at  timestamptz NOT NULL DEFAULT now()
+  daily_day   date DEFAULT ((now() AT TIME ZONE 'America/Fortaleza')::date),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT checkin_daily_day_matches_created CHECK (daily_day IS NULL OR daily_day = (created_at AT TIME ZONE 'America/Fortaleza')::date)
 );
 
 CREATE INDEX idx_checkin_patient_date ON checkin (patient_id, created_at DESC);
+CREATE UNIQUE INDEX checkin_patient_daily_unique ON checkin (patient_id, daily_day) WHERE daily_day IS NOT NULL;
 
 -- ============================================================
 -- 4. Operacional & Observabilidade
@@ -1077,3 +1081,27 @@ CREATE POLICY clinical_record_psychologist_write ON clinical_record
       WHERE psychologist_id = current_psychologist_id() AND status = 'active'
     )
   );
+
+
+ALTER TABLE checkin ENABLE ROW LEVEL SECURITY;
+CREATE POLICY checkin_clinical_select ON checkin FOR SELECT USING (
+  (current_user_role() = 'patient' AND patient_id IN (
+    SELECT id FROM patient_profile WHERE user_id = current_user_id() AND organization_id = current_organization_id()
+  )) OR (current_user_role() = 'psychologist' AND has_active_clinical_relationship(patient_id, current_psychologist_id()))
+);
+CREATE POLICY checkin_clinical_insert ON checkin FOR INSERT WITH CHECK (
+  (current_user_role() = 'patient' AND patient_id IN (
+    SELECT id FROM patient_profile WHERE user_id = current_user_id() AND organization_id = current_organization_id()
+  ) AND EXISTS (SELECT 1 FROM patient_relationship r WHERE r.patient_id = checkin.patient_id AND has_active_clinical_relationship(r.patient_id, r.psychologist_id)))
+  OR (current_user_role() = 'psychologist' AND has_active_clinical_relationship(patient_id, current_psychologist_id()))
+);
+CREATE POLICY checkin_patient_update ON checkin FOR UPDATE USING (
+  current_user_role() = 'patient' AND patient_id IN (
+    SELECT id FROM patient_profile WHERE user_id = current_user_id() AND organization_id = current_organization_id()
+  ) AND daily_day = (now() AT TIME ZONE 'America/Fortaleza')::date
+  AND EXISTS (SELECT 1 FROM patient_relationship r WHERE r.patient_id = checkin.patient_id AND has_active_clinical_relationship(r.patient_id, r.psychologist_id))
+) WITH CHECK (
+  current_user_role() = 'patient' AND patient_id IN (
+    SELECT id FROM patient_profile WHERE user_id = current_user_id() AND organization_id = current_organization_id()
+  ) AND daily_day = (now() AT TIME ZONE 'America/Fortaleza')::date
+);

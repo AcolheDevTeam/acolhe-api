@@ -48,8 +48,8 @@ type FakeQuerier struct {
 	GetAppointmentForPsychFn    func(ctx context.Context, arg db.GetAppointmentForPsychologistParams) (db.GetAppointmentForPsychologistRow, error)
 	UpdateAppointmentStatusFn   func(ctx context.Context, arg db.UpdateAppointmentStatusParams) (db.UpdateAppointmentStatusRow, error)
 	PatientInOrgFn              func(ctx context.Context, arg db.PatientInOrgParams) (bool, error)
-	CreateCheckinFn             func(ctx context.Context, arg db.CreateCheckinParams) (db.Checkin, error)
-	ListCheckinsFn              func(ctx context.Context, arg db.ListCheckinsByPatientParams) ([]db.Checkin, error)
+	CreateCheckinFn             func(ctx context.Context, arg db.CreateCheckinParams) (db.CreateCheckinRow, error)
+	ListCheckinsFn              func(ctx context.Context, arg db.ListCheckinsByPatientParams) ([]db.ListCheckinsByPatientRow, error)
 	CreateDocumentFn            func(ctx context.Context, arg db.CreateDocumentParams) (db.CreateDocumentRow, error)
 	ListDocumentsFn             func(ctx context.Context, arg db.ListDocumentsByPatientParams) ([]db.ListDocumentsByPatientRow, error)
 	ListPatientsByOrgFn         func(ctx context.Context, organizationID uuid.UUID) ([]db.ListPatientsByOrgRow, error)
@@ -92,14 +92,14 @@ func (f *FakeQuerier) PatientInOrg(ctx context.Context, arg db.PatientInOrgParam
 	panic("PatientInOrg não configurado no FakeQuerier")
 }
 
-func (f *FakeQuerier) CreateCheckin(ctx context.Context, arg db.CreateCheckinParams) (db.Checkin, error) {
+func (f *FakeQuerier) CreateCheckin(ctx context.Context, arg db.CreateCheckinParams) (db.CreateCheckinRow, error) {
 	if f.CreateCheckinFn != nil {
 		return f.CreateCheckinFn(ctx, arg)
 	}
 	panic("CreateCheckin não configurado no FakeQuerier")
 }
 
-func (f *FakeQuerier) ListCheckinsByPatient(ctx context.Context, arg db.ListCheckinsByPatientParams) ([]db.Checkin, error) {
+func (f *FakeQuerier) ListCheckinsByPatient(ctx context.Context, arg db.ListCheckinsByPatientParams) ([]db.ListCheckinsByPatientRow, error) {
 	if f.ListCheckinsFn != nil {
 		return f.ListCheckinsFn(ctx, arg)
 	}

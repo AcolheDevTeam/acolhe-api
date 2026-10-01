@@ -51,31 +51,45 @@ func (q *Queries) ConfirmPatientAppointment(ctx context.Context, arg ConfirmPati
 
 const createPatientCheckin = `-- name: CreatePatientCheckin :one
 INSERT INTO checkin (patient_id, mood, note)
-SELECT p.id, $1, $2
-FROM patient_profile p
-JOIN patient_relationship r ON r.patient_id = p.id
-WHERE p.user_id = $3
-  AND p.status <> 'deleted'
-  AND r.status = 'active'
-  AND r.consent_id IS NOT NULL
-RETURNING id, patient_id, mood, note, created_at
+SELECT p.id, $1, $2 FROM patient_profile p
+WHERE p.user_id = $3 AND p.organization_id = $4 AND p.status <> 'deleted'
+  AND EXISTS (SELECT 1 FROM patient_relationship r WHERE r.patient_id = p.id AND has_active_clinical_relationship(r.patient_id, r.psychologist_id))
+ON CONFLICT (patient_id, daily_day) WHERE daily_day IS NOT NULL DO NOTHING
+RETURNING id, mood, note, created_at, updated_at,
+          ((created_at AT TIME ZONE 'America/Fortaleza')::date)::text AS day
 `
 
 type CreatePatientCheckinParams struct {
-	Mood   int32      `json:"mood"`
-	Note   *string    `json:"note"`
-	UserID *uuid.UUID `json:"user_id"`
+	Mood           int32      `json:"mood"`
+	Note           *string    `json:"note"`
+	UserID         *uuid.UUID `json:"user_id"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
 }
 
-func (q *Queries) CreatePatientCheckin(ctx context.Context, arg CreatePatientCheckinParams) (Checkin, error) {
-	row := q.db.QueryRow(ctx, createPatientCheckin, arg.Mood, arg.Note, arg.UserID)
-	var i Checkin
+type CreatePatientCheckinRow struct {
+	ID        uuid.UUID `json:"id"`
+	Mood      int32     `json:"mood"`
+	Note      *string   `json:"note"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Day       string    `json:"day"`
+}
+
+func (q *Queries) CreatePatientCheckin(ctx context.Context, arg CreatePatientCheckinParams) (CreatePatientCheckinRow, error) {
+	row := q.db.QueryRow(ctx, createPatientCheckin,
+		arg.Mood,
+		arg.Note,
+		arg.UserID,
+		arg.OrganizationID,
+	)
+	var i CreatePatientCheckinRow
 	err := row.Scan(
 		&i.ID,
-		&i.PatientID,
 		&i.Mood,
 		&i.Note,
 		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Day,
 	)
 	return i, err
 }
@@ -229,30 +243,29 @@ func (q *Queries) GetPatientProcessSummary(ctx context.Context, userID *uuid.UUI
 }
 
 const listPatientCheckins = `-- name: ListPatientCheckins :many
-SELECT c.id, c.mood, c.note, c.created_at
-FROM checkin c
-JOIN patient_profile p ON p.id = c.patient_id
-WHERE p.user_id = $1
-  AND p.status <> 'deleted'
-  AND EXISTS (
-    SELECT 1 FROM patient_relationship r
-    WHERE r.patient_id = p.id
-      AND r.status = 'active'
-      AND r.consent_id IS NOT NULL
-  )
-ORDER BY c.created_at DESC
-LIMIT 10
+SELECT c.id, c.mood, c.note, c.created_at, c.updated_at,
+       ((c.created_at AT TIME ZONE 'America/Fortaleza')::date)::text AS day
+FROM checkin c JOIN patient_profile p ON p.id = c.patient_id
+WHERE p.user_id = $1 AND p.organization_id = $2 AND p.status <> 'deleted'
+ORDER BY c.created_at DESC, c.id DESC
 `
+
+type ListPatientCheckinsParams struct {
+	UserID         *uuid.UUID `json:"user_id"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
+}
 
 type ListPatientCheckinsRow struct {
 	ID        uuid.UUID `json:"id"`
 	Mood      int32     `json:"mood"`
 	Note      *string   `json:"note"`
 	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Day       string    `json:"day"`
 }
 
-func (q *Queries) ListPatientCheckins(ctx context.Context, userID *uuid.UUID) ([]ListPatientCheckinsRow, error) {
-	rows, err := q.db.Query(ctx, listPatientCheckins, userID)
+func (q *Queries) ListPatientCheckins(ctx context.Context, arg ListPatientCheckinsParams) ([]ListPatientCheckinsRow, error) {
+	rows, err := q.db.Query(ctx, listPatientCheckins, arg.UserID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -265,6 +278,8 @@ func (q *Queries) ListPatientCheckins(ctx context.Context, userID *uuid.UUID) ([
 			&i.Mood,
 			&i.Note,
 			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Day,
 		); err != nil {
 			return nil, err
 		}
@@ -325,4 +340,52 @@ func (q *Queries) ListPatientPendingActivities(ctx context.Context, userID *uuid
 		return nil, err
 	}
 	return items, nil
+}
+
+const updatePatientCheckin = `-- name: UpdatePatientCheckin :one
+UPDATE checkin c SET mood = $1, note = $2, updated_at = now()
+FROM patient_profile p
+WHERE c.id = $3 AND p.id = c.patient_id AND p.user_id = $4
+  AND p.organization_id = $5 AND p.status <> 'deleted'
+  AND c.daily_day = (now() AT TIME ZONE 'America/Fortaleza')::date
+  AND EXISTS (SELECT 1 FROM patient_relationship r WHERE r.patient_id = p.id AND has_active_clinical_relationship(r.patient_id, r.psychologist_id))
+RETURNING c.id, c.mood, c.note, c.created_at, c.updated_at,
+          ((c.created_at AT TIME ZONE 'America/Fortaleza')::date)::text AS day
+`
+
+type UpdatePatientCheckinParams struct {
+	Mood           int32      `json:"mood"`
+	Note           *string    `json:"note"`
+	ID             uuid.UUID  `json:"id"`
+	UserID         *uuid.UUID `json:"user_id"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
+}
+
+type UpdatePatientCheckinRow struct {
+	ID        uuid.UUID `json:"id"`
+	Mood      int32     `json:"mood"`
+	Note      *string   `json:"note"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Day       string    `json:"day"`
+}
+
+func (q *Queries) UpdatePatientCheckin(ctx context.Context, arg UpdatePatientCheckinParams) (UpdatePatientCheckinRow, error) {
+	row := q.db.QueryRow(ctx, updatePatientCheckin,
+		arg.Mood,
+		arg.Note,
+		arg.ID,
+		arg.UserID,
+		arg.OrganizationID,
+	)
+	var i UpdatePatientCheckinRow
+	err := row.Scan(
+		&i.ID,
+		&i.Mood,
+		&i.Note,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Day,
+	)
+	return i, err
 }

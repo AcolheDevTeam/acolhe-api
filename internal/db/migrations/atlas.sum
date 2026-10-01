@@ -1,4 +1,4 @@
-h1:UCbSec098K+9k4aEZqX0lkDkslpGtKfxE0zgu2T/rGE=
+h1:XyFZxBBiv71DIBlIh+NYDScZcFIj7tDp0pO9S505fEc=
 20260529120000_baseline.sql h1:ByTjg/JkoMvwaDFFkYERvKB5UlGiRBM/wQCp8Fln1bQ=
 20260529235643_add_checkin.sql h1:ZvYa6ocQrpHv6Y9AtOaCXcGBxWD5QHhZWdAS2wnMt04=
 20260728190000_add_clinical_rls_policies.sql h1:4IDWbG2EKltEwA5gKj1Yvq9WanlCjih9ZdUbpgNJ1zs=
@@ -14,3 +14,4 @@ h1:UCbSec098K+9k4aEZqX0lkDkslpGtKfxE0zgu2T/rGE=
 20260918140000_fix_patient_consent_scope.sql h1:y/7MVDZHUC0gLLwRzqRHeBIk2ZI1SaMLvDfcQ4kGEz0=
 20261001010000_link_appointment_session.sql h1:QLbNXdqawFjynn+ws5otHWmVfbN95vPIanf2fIgTlOY=
 20261001020000_patient_confirm_appointment.sql h1:fWZyZn6d2G7MUoD3ekBarBSG6GCr8xv79L1S1ScjQ/I=
+20261001130000_daily_checkin.sql h1:UtmmfgfSEPBT1CEiKZl2Chc0n/wBZoTwbXC0Jh9XWDA=

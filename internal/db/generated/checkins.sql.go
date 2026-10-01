@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -14,7 +15,9 @@ import (
 const createCheckin = `-- name: CreateCheckin :one
 INSERT INTO checkin (patient_id, mood, note)
 VALUES ($1, $2, $3)
-RETURNING id, patient_id, mood, note, created_at
+ON CONFLICT (patient_id, daily_day) WHERE daily_day IS NOT NULL DO NOTHING
+RETURNING id, patient_id, mood, note, created_at, updated_at,
+          ((created_at AT TIME ZONE 'America/Fortaleza')::date)::text AS day
 `
 
 type CreateCheckinParams struct {
@@ -23,49 +26,76 @@ type CreateCheckinParams struct {
 	Note      *string   `json:"note"`
 }
 
+type CreateCheckinRow struct {
+	ID        uuid.UUID `json:"id"`
+	PatientID uuid.UUID `json:"patient_id"`
+	Mood      int32     `json:"mood"`
+	Note      *string   `json:"note"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Day       string    `json:"day"`
+}
+
 // Isolamento de org garantido pela checagem do paciente na mesma org (no service).
-func (q *Queries) CreateCheckin(ctx context.Context, arg CreateCheckinParams) (Checkin, error) {
+func (q *Queries) CreateCheckin(ctx context.Context, arg CreateCheckinParams) (CreateCheckinRow, error) {
 	row := q.db.QueryRow(ctx, createCheckin, arg.PatientID, arg.Mood, arg.Note)
-	var i Checkin
+	var i CreateCheckinRow
 	err := row.Scan(
 		&i.ID,
 		&i.PatientID,
 		&i.Mood,
 		&i.Note,
 		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Day,
 	)
 	return i, err
 }
 
 const listCheckinsByPatient = `-- name: ListCheckinsByPatient :many
-SELECT c.id, c.patient_id, c.mood, c.note, c.created_at
+SELECT c.id, c.patient_id, c.mood, c.note, c.created_at, c.updated_at,
+       ((c.created_at AT TIME ZONE 'America/Fortaleza')::date)::text AS day
 FROM checkin c
 JOIN patient_profile p ON p.id = c.patient_id
 WHERE c.patient_id = $1
   AND p.organization_id = $2
-ORDER BY c.created_at DESC
+  AND has_active_clinical_relationship(c.patient_id, $3)
+ORDER BY c.created_at DESC, c.id DESC
 `
 
 type ListCheckinsByPatientParams struct {
 	PatientID      uuid.UUID `json:"patient_id"`
 	OrganizationID uuid.UUID `json:"organization_id"`
+	PsychologistID uuid.UUID `json:"psychologist_id"`
 }
 
-func (q *Queries) ListCheckinsByPatient(ctx context.Context, arg ListCheckinsByPatientParams) ([]Checkin, error) {
-	rows, err := q.db.Query(ctx, listCheckinsByPatient, arg.PatientID, arg.OrganizationID)
+type ListCheckinsByPatientRow struct {
+	ID        uuid.UUID `json:"id"`
+	PatientID uuid.UUID `json:"patient_id"`
+	Mood      int32     `json:"mood"`
+	Note      *string   `json:"note"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Day       string    `json:"day"`
+}
+
+func (q *Queries) ListCheckinsByPatient(ctx context.Context, arg ListCheckinsByPatientParams) ([]ListCheckinsByPatientRow, error) {
+	rows, err := q.db.Query(ctx, listCheckinsByPatient, arg.PatientID, arg.OrganizationID, arg.PsychologistID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Checkin
+	var items []ListCheckinsByPatientRow
 	for rows.Next() {
-		var i Checkin
+		var i ListCheckinsByPatientRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.PatientID,
 			&i.Mood,
 			&i.Note,
 			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Day,
 		); err != nil {
 			return nil, err
 		}

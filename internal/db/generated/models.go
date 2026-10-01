@@ -134,11 +134,13 @@ type AuditLog struct {
 }
 
 type Checkin struct {
-	ID        uuid.UUID `json:"id"`
-	PatientID uuid.UUID `json:"patient_id"`
-	Mood      int32     `json:"mood"`
-	Note      *string   `json:"note"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        uuid.UUID   `json:"id"`
+	PatientID uuid.UUID   `json:"patient_id"`
+	Mood      int32       `json:"mood"`
+	Note      *string     `json:"note"`
+	DailyDay  pgtype.Date `json:"daily_day"`
+	UpdatedAt time.Time   `json:"updated_at"`
+	CreatedAt time.Time   `json:"created_at"`
 }
 
 type ClinicalRecord struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,9 @@ var (
 	ErrPatientOnly             = errors.New("rota disponível somente para paciente")
 	ErrPortalUnavailable       = errors.New("contexto do paciente não disponível")
 	ErrConfirmationUnavailable = errors.New("este agendamento não pode mais ser confirmado")
+	ErrDailyCheckinExists      = errors.New("você já registrou o check-in de hoje; edite o registro existente")
+	ErrCheckinNotEditable      = errors.New("este check-in não está disponível para edição hoje")
+	ErrInvalidCheckinNote      = errors.New("a observação deve ter no máximo 1.000 caracteres")
 	ErrInvalidMood             = errors.New("humor deve estar entre 1 e 5")
 )
 
@@ -51,6 +55,8 @@ type ProcessSummary struct {
 }
 
 type PatientCheckin struct {
+	Day       string    `json:"day"`
+	UpdatedAt time.Time `json:"updatedAt"`
 	ID        uuid.UUID `json:"id"`
 	Mood      int32     `json:"mood"`
 	Note      *string   `json:"note"`
@@ -149,33 +155,71 @@ func (s *Service) Checkins(ctx context.Context) ([]PatientCheckin, error) {
 		return nil, err
 	}
 	id, _ := tenant.FromContext(ctx)
-	rows, err := tenant.Queries(ctx, s.q).ListPatientCheckins(ctx, &id.UserID)
+	rows, err := tenant.Queries(ctx, s.q).ListPatientCheckins(ctx, db.ListPatientCheckinsParams{UserID: &id.UserID, OrganizationID: id.OrgID})
 	if err != nil {
 		return nil, err
 	}
 	out := make([]PatientCheckin, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, PatientCheckin{ID: row.ID, Mood: row.Mood, Note: row.Note, CreatedAt: row.CreatedAt})
+		out = append(out, PatientCheckin{ID: row.ID, Mood: row.Mood, Note: row.Note, CreatedAt: row.CreatedAt, Day: row.Day, UpdatedAt: row.UpdatedAt})
 	}
 	return out, nil
 }
 
-func (s *Service) CreatePatientCheckin(ctx context.Context, req CheckinRequest) (*PatientCheckin, error) {
+func validateCheckin(req *CheckinRequest) error {
 	if req.Mood < 1 || req.Mood > 5 {
-		return nil, ErrInvalidMood
+		return ErrInvalidMood
+	}
+	if req.Note != nil {
+		trimmed := strings.TrimSpace(*req.Note)
+		if len([]rune(trimmed)) > 1000 {
+			return ErrInvalidCheckinNote
+		}
+		if trimmed == "" {
+			req.Note = nil
+		} else {
+			req.Note = &trimmed
+		}
+	}
+	return nil
+}
+
+func (s *Service) CreatePatientCheckin(ctx context.Context, req CheckinRequest) (*PatientCheckin, error) {
+	if err := validateCheckin(&req); err != nil {
+		return nil, err
 	}
 	if err := s.requirePatient(ctx); err != nil {
 		return nil, err
 	}
 	id, _ := tenant.FromContext(ctx)
-	row, err := tenant.Queries(ctx, s.q).CreatePatientCheckin(ctx, db.CreatePatientCheckinParams{Mood: req.Mood, Note: req.Note, UserID: &id.UserID})
+	row, err := tenant.Queries(ctx, s.q).CreatePatientCheckin(ctx, db.CreatePatientCheckinParams{Mood: req.Mood, Note: req.Note, UserID: &id.UserID, OrganizationID: id.OrgID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrPortalUnavailable
+		return nil, ErrDailyCheckinExists
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &PatientCheckin{ID: row.ID, Mood: row.Mood, Note: row.Note, CreatedAt: row.CreatedAt}, nil
+	return &PatientCheckin{ID: row.ID, Mood: row.Mood, Note: row.Note, CreatedAt: row.CreatedAt, Day: row.Day, UpdatedAt: row.UpdatedAt}, nil
+}
+
+func (s *Service) UpdatePatientCheckin(ctx context.Context, checkinID uuid.UUID, req CheckinRequest) (*PatientCheckin, error) {
+	if err := validateCheckin(&req); err != nil {
+		return nil, err
+	}
+	if err := s.requirePatient(ctx); err != nil {
+		return nil, err
+	}
+	id, _ := tenant.FromContext(ctx)
+	row, err := tenant.Queries(ctx, s.q).UpdatePatientCheckin(ctx, db.UpdatePatientCheckinParams{
+		ID: checkinID, Mood: req.Mood, Note: req.Note, UserID: &id.UserID, OrganizationID: id.OrgID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrCheckinNotEditable
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &PatientCheckin{ID: row.ID, Mood: row.Mood, Note: row.Note, CreatedAt: row.CreatedAt, Day: row.Day, UpdatedAt: row.UpdatedAt}, nil
 }
 
 func (s *Service) ProcessSummary(ctx context.Context) (*ProcessSummary, error) {
@@ -191,6 +235,12 @@ func (s *Service) ProcessSummary(ctx context.Context) (*ProcessSummary, error) {
 }
 
 func portalError(err error) *echo.HTTPError {
+	if errors.Is(err, ErrInvalidMood) || errors.Is(err, ErrInvalidCheckinNote) {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	if errors.Is(err, ErrDailyCheckinExists) || errors.Is(err, ErrCheckinNotEditable) {
+		return echo.NewHTTPError(http.StatusConflict, err.Error())
+	}
 	if errors.Is(err, ErrConfirmationUnavailable) {
 		return echo.NewHTTPError(http.StatusConflict, err.Error())
 	}

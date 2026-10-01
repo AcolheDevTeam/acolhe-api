@@ -48,30 +48,30 @@ WHERE p.user_id = @user_id
 ORDER BY COALESCE(ag.due_at, ag.scheduled_for, ag.created_at);
 
 -- name: ListPatientCheckins :many
-SELECT c.id, c.mood, c.note, c.created_at
-FROM checkin c
-JOIN patient_profile p ON p.id = c.patient_id
-WHERE p.user_id = @user_id
-  AND p.status <> 'deleted'
-  AND EXISTS (
-    SELECT 1 FROM patient_relationship r
-    WHERE r.patient_id = p.id
-      AND r.status = 'active'
-      AND r.consent_id IS NOT NULL
-  )
-ORDER BY c.created_at DESC
-LIMIT 10;
+SELECT c.id, c.mood, c.note, c.created_at, c.updated_at,
+       ((c.created_at AT TIME ZONE 'America/Fortaleza')::date)::text AS day
+FROM checkin c JOIN patient_profile p ON p.id = c.patient_id
+WHERE p.user_id = @user_id AND p.organization_id = @organization_id AND p.status <> 'deleted'
+ORDER BY c.created_at DESC, c.id DESC;
 
 -- name: CreatePatientCheckin :one
 INSERT INTO checkin (patient_id, mood, note)
-SELECT p.id, @mood, @note
+SELECT p.id, @mood, @note FROM patient_profile p
+WHERE p.user_id = @user_id AND p.organization_id = @organization_id AND p.status <> 'deleted'
+  AND EXISTS (SELECT 1 FROM patient_relationship r WHERE r.patient_id = p.id AND has_active_clinical_relationship(r.patient_id, r.psychologist_id))
+ON CONFLICT (patient_id, daily_day) WHERE daily_day IS NOT NULL DO NOTHING
+RETURNING id, mood, note, created_at, updated_at,
+          ((created_at AT TIME ZONE 'America/Fortaleza')::date)::text AS day;
+
+-- name: UpdatePatientCheckin :one
+UPDATE checkin c SET mood = @mood, note = @note, updated_at = now()
 FROM patient_profile p
-JOIN patient_relationship r ON r.patient_id = p.id
-WHERE p.user_id = @user_id
-  AND p.status <> 'deleted'
-  AND r.status = 'active'
-  AND r.consent_id IS NOT NULL
-RETURNING id, patient_id, mood, note, created_at;
+WHERE c.id = @id AND p.id = c.patient_id AND p.user_id = @user_id
+  AND p.organization_id = @organization_id AND p.status <> 'deleted'
+  AND c.daily_day = (now() AT TIME ZONE 'America/Fortaleza')::date
+  AND EXISTS (SELECT 1 FROM patient_relationship r WHERE r.patient_id = p.id AND has_active_clinical_relationship(r.patient_id, r.psychologist_id))
+RETURNING c.id, c.mood, c.note, c.created_at, c.updated_at,
+          ((c.created_at AT TIME ZONE 'America/Fortaleza')::date)::text AS day;
 
 -- name: GetPatientProcessSummary :one
 SELECT

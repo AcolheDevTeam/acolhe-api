@@ -66,7 +66,7 @@ WHERE a.psychologist_id = @psychologist_id
 
 -- name: RescheduleAppointment :one
 UPDATE appointment a SET scheduled_for = @scheduled_for,
-  duration_minutes = @duration_minutes, modality = @modality, updated_at = now()
+  duration_minutes = @duration_minutes, modality = @modality, status = 'scheduled', updated_at = now()
 FROM patient_profile patient
 WHERE a.id = @id AND patient.id = a.patient_id
   AND a.psychologist_id = @psychologist_id AND patient.organization_id = @organization_id

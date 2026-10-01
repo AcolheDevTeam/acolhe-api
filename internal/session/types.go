@@ -15,16 +15,19 @@ type CreateRequest struct {
 
 // Session é a projeção pública de uma sessão clínica.
 type Session struct {
-	ID             uuid.UUID `json:"id"`
-	PatientID      uuid.UUID `json:"patientId"`
-	PatientName    string    `json:"patientName,omitempty"`
-	PsychologistID uuid.UUID `json:"psychologistId"`
-	OccurredAt     time.Time `json:"occurredAt"`
-	Status         string    `json:"status"`
-	Notes          string    `json:"notes,omitempty"`
-	Modality       *string   `json:"modality,omitempty"`
-	DurationMin    *int32    `json:"durationMin,omitempty"`
-	CreatedAt      time.Time `json:"createdAt"`
+	ID             uuid.UUID  `json:"id"`
+	AppointmentID  *uuid.UUID `json:"appointmentId,omitempty"`
+	Version        int32      `json:"version"`
+	Locked         bool       `json:"locked"`
+	PatientID      uuid.UUID  `json:"patientId"`
+	PatientName    string     `json:"patientName,omitempty"`
+	PsychologistID uuid.UUID  `json:"psychologistId"`
+	OccurredAt     time.Time  `json:"occurredAt"`
+	Status         string     `json:"status"`
+	Notes          string     `json:"notes,omitempty"`
+	Modality       *string    `json:"modality,omitempty"`
+	DurationMin    *int32     `json:"durationMin,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
 }
 
 // TimelineItem é uma entrada da timeline unificada do paciente.

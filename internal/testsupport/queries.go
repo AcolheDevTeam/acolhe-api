@@ -19,6 +19,12 @@ import (
 type FakeQuerier struct {
 	db.Querier
 
+	CreateSessionFromAppointmentFn  func(context.Context, db.CreateSessionFromAppointmentParams) (db.CreateSessionFromAppointmentRow, error)
+	CreateClinicalRecordIfMissingFn func(context.Context, db.CreateClinicalRecordIfMissingParams) error
+
+	LockPsychologistScheduleFn       func(context.Context, db.LockPsychologistScheduleParams) (uuid.UUID, error)
+	LockAppointmentForPsychologistFn func(context.Context, db.LockAppointmentForPsychologistParams) (uuid.UUID, error)
+
 	HealthCheckFn               func(ctx context.Context) (int32, error)
 	GetUserByEmailFn            func(ctx context.Context, email string) (db.GetUserByEmailRow, error)
 	GetUserByIDFn               func(ctx context.Context, id uuid.UUID) (db.GetUserByIDRow, error)
@@ -260,4 +266,37 @@ func (f *FakeQuerier) ListPatientsByPsychologist(ctx context.Context, arg db.Lis
 		return f.ListPatientsByPsychFn(ctx, arg)
 	}
 	panic("ListPatientsByPsychologist não configurado no FakeQuerier")
+}
+
+// O dublê não executa transações; testes de concorrência usam Postgres real.
+func (f *FakeQuerier) LockPsychologistSchedule(ctx context.Context, arg db.LockPsychologistScheduleParams) (uuid.UUID, error) {
+	if f.LockPsychologistScheduleFn != nil {
+		return f.LockPsychologistScheduleFn(ctx, arg)
+	}
+	return arg.PsychologistID, nil
+}
+
+func (f *FakeQuerier) CompleteAppointmentSession(ctx context.Context, arg db.CompleteAppointmentSessionParams) error {
+	return nil
+}
+
+func (f *FakeQuerier) LockAppointmentForPsychologist(ctx context.Context, arg db.LockAppointmentForPsychologistParams) (uuid.UUID, error) {
+	if f.LockAppointmentForPsychologistFn != nil {
+		return f.LockAppointmentForPsychologistFn(ctx, arg)
+	}
+	return arg.ID, nil
+}
+
+func (f *FakeQuerier) CreateSessionFromAppointment(ctx context.Context, arg db.CreateSessionFromAppointmentParams) (db.CreateSessionFromAppointmentRow, error) {
+	if f.CreateSessionFromAppointmentFn != nil {
+		return f.CreateSessionFromAppointmentFn(ctx, arg)
+	}
+	panic("CreateSessionFromAppointment não configurado no FakeQuerier")
+}
+
+func (f *FakeQuerier) CreateClinicalRecordIfMissing(ctx context.Context, arg db.CreateClinicalRecordIfMissingParams) error {
+	if f.CreateClinicalRecordIfMissingFn != nil {
+		return f.CreateClinicalRecordIfMissingFn(ctx, arg)
+	}
+	panic("CreateClinicalRecordIfMissing não configurado no FakeQuerier")
 }

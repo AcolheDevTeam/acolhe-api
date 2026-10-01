@@ -45,6 +45,37 @@ func (q *Queries) CountAppointmentConflicts(ctx context.Context, arg CountAppoin
 	return conflict_count, err
 }
 
+const countRescheduleConflicts = `-- name: CountRescheduleConflicts :one
+SELECT count(*) FROM appointment a
+JOIN patient_profile patient ON patient.id = a.patient_id
+WHERE a.psychologist_id = $1
+  AND patient.organization_id = $2
+  AND a.id <> $3 AND a.status <> 'canceled'
+  AND tstzrange(a.scheduled_for, a.scheduled_for + a.duration_minutes * interval '1 minute')
+   && tstzrange($4, $5)
+`
+
+type CountRescheduleConflictsParams struct {
+	PsychologistID uuid.UUID   `json:"psychologist_id"`
+	OrganizationID uuid.UUID   `json:"organization_id"`
+	AppointmentID  uuid.UUID   `json:"appointment_id"`
+	WindowStart    interface{} `json:"window_start"`
+	WindowEnd      interface{} `json:"window_end"`
+}
+
+func (q *Queries) CountRescheduleConflicts(ctx context.Context, arg CountRescheduleConflictsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countRescheduleConflicts,
+		arg.PsychologistID,
+		arg.OrganizationID,
+		arg.AppointmentID,
+		arg.WindowStart,
+		arg.WindowEnd,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAppointment = `-- name: CreateAppointment :one
 INSERT INTO appointment (patient_id, psychologist_id, scheduled_for, duration_minutes, modality)
 VALUES ($1, $2, $3, $4, $5)
@@ -94,9 +125,11 @@ func (q *Queries) CreateAppointment(ctx context.Context, arg CreateAppointmentPa
 
 const getAppointmentForPsychologist = `-- name: GetAppointmentForPsychologist :one
 SELECT a.id, a.patient_id, a.psychologist_id, a.scheduled_for,
-       a.duration_minutes, a.modality, a.status, a.created_at
+       a.duration_minutes, a.modality, a.status, a.created_at, patient.full_name AS patient_name,
+       s.id AS session_id
 FROM appointment a
 JOIN patient_profile patient ON patient.id = a.patient_id
+LEFT JOIN session s ON s.appointment_id = a.id
 WHERE a.id = $1
   AND a.psychologist_id = $2
   AND patient.organization_id = $3
@@ -109,14 +142,16 @@ type GetAppointmentForPsychologistParams struct {
 }
 
 type GetAppointmentForPsychologistRow struct {
-	ID              uuid.UUID `json:"id"`
-	PatientID       uuid.UUID `json:"patient_id"`
-	PsychologistID  uuid.UUID `json:"psychologist_id"`
-	ScheduledFor    time.Time `json:"scheduled_for"`
-	DurationMinutes int32     `json:"duration_minutes"`
-	Modality        string    `json:"modality"`
-	Status          string    `json:"status"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID              uuid.UUID  `json:"id"`
+	PatientID       uuid.UUID  `json:"patient_id"`
+	PsychologistID  uuid.UUID  `json:"psychologist_id"`
+	ScheduledFor    time.Time  `json:"scheduled_for"`
+	DurationMinutes int32      `json:"duration_minutes"`
+	Modality        string     `json:"modality"`
+	Status          string     `json:"status"`
+	CreatedAt       time.Time  `json:"created_at"`
+	PatientName     string     `json:"patient_name"`
+	SessionID       *uuid.UUID `json:"session_id"`
 }
 
 func (q *Queries) GetAppointmentForPsychologist(ctx context.Context, arg GetAppointmentForPsychologistParams) (GetAppointmentForPsychologistRow, error) {
@@ -131,13 +166,15 @@ func (q *Queries) GetAppointmentForPsychologist(ctx context.Context, arg GetAppo
 		&i.Modality,
 		&i.Status,
 		&i.CreatedAt,
+		&i.PatientName,
+		&i.SessionID,
 	)
 	return i, err
 }
 
 const listAppointmentsByPsychologist = `-- name: ListAppointmentsByPsychologist :many
 SELECT a.id, a.patient_id, a.psychologist_id, a.scheduled_for, a.duration_minutes,
-       a.modality, a.status, a.created_at
+       a.modality, a.status, a.created_at, p.full_name AS patient_name
 FROM appointment a
 JOIN patient_profile p ON p.id = a.patient_id
 WHERE a.psychologist_id = $1
@@ -159,6 +196,7 @@ type ListAppointmentsByPsychologistRow struct {
 	Modality        string    `json:"modality"`
 	Status          string    `json:"status"`
 	CreatedAt       time.Time `json:"created_at"`
+	PatientName     string    `json:"patient_name"`
 }
 
 func (q *Queries) ListAppointmentsByPsychologist(ctx context.Context, arg ListAppointmentsByPsychologistParams) ([]ListAppointmentsByPsychologistRow, error) {
@@ -179,6 +217,7 @@ func (q *Queries) ListAppointmentsByPsychologist(ctx context.Context, arg ListAp
 			&i.Modality,
 			&i.Status,
 			&i.CreatedAt,
+			&i.PatientName,
 		); err != nil {
 			return nil, err
 		}
@@ -188,6 +227,101 @@ func (q *Queries) ListAppointmentsByPsychologist(ctx context.Context, arg ListAp
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockAppointmentForPsychologist = `-- name: LockAppointmentForPsychologist :one
+SELECT a.id FROM appointment a
+JOIN patient_profile patient ON patient.id = a.patient_id
+WHERE a.id = $1 AND a.psychologist_id = $2
+  AND patient.organization_id = $3
+FOR UPDATE OF a
+`
+
+type LockAppointmentForPsychologistParams struct {
+	ID             uuid.UUID `json:"id"`
+	PsychologistID uuid.UUID `json:"psychologist_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+}
+
+func (q *Queries) LockAppointmentForPsychologist(ctx context.Context, arg LockAppointmentForPsychologistParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockAppointmentForPsychologist, arg.ID, arg.PsychologistID, arg.OrganizationID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockPsychologistSchedule = `-- name: LockPsychologistSchedule :one
+SELECT p.id FROM psychologist_profile p
+JOIN "user" u ON u.id = p.user_id
+WHERE p.id = $1 AND u.organization_id = $2
+FOR UPDATE OF p
+`
+
+type LockPsychologistScheduleParams struct {
+	PsychologistID uuid.UUID  `json:"psychologist_id"`
+	OrganizationID *uuid.UUID `json:"organization_id"`
+}
+
+func (q *Queries) LockPsychologistSchedule(ctx context.Context, arg LockPsychologistScheduleParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockPsychologistSchedule, arg.PsychologistID, arg.OrganizationID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const rescheduleAppointment = `-- name: RescheduleAppointment :one
+UPDATE appointment a SET scheduled_for = $1,
+  duration_minutes = $2, modality = $3, updated_at = now()
+FROM patient_profile patient
+WHERE a.id = $4 AND patient.id = a.patient_id
+  AND a.psychologist_id = $5 AND patient.organization_id = $6
+  AND a.status IN ('scheduled', 'confirmed')
+  AND NOT EXISTS (SELECT 1 FROM session s WHERE s.appointment_id = a.id)
+RETURNING a.id, a.patient_id, a.psychologist_id, a.scheduled_for,
+  a.duration_minutes, a.modality, a.status, a.created_at
+`
+
+type RescheduleAppointmentParams struct {
+	ScheduledFor    time.Time `json:"scheduled_for"`
+	DurationMinutes int32     `json:"duration_minutes"`
+	Modality        string    `json:"modality"`
+	ID              uuid.UUID `json:"id"`
+	PsychologistID  uuid.UUID `json:"psychologist_id"`
+	OrganizationID  uuid.UUID `json:"organization_id"`
+}
+
+type RescheduleAppointmentRow struct {
+	ID              uuid.UUID `json:"id"`
+	PatientID       uuid.UUID `json:"patient_id"`
+	PsychologistID  uuid.UUID `json:"psychologist_id"`
+	ScheduledFor    time.Time `json:"scheduled_for"`
+	DurationMinutes int32     `json:"duration_minutes"`
+	Modality        string    `json:"modality"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+func (q *Queries) RescheduleAppointment(ctx context.Context, arg RescheduleAppointmentParams) (RescheduleAppointmentRow, error) {
+	row := q.db.QueryRow(ctx, rescheduleAppointment,
+		arg.ScheduledFor,
+		arg.DurationMinutes,
+		arg.Modality,
+		arg.ID,
+		arg.PsychologistID,
+		arg.OrganizationID,
+	)
+	var i RescheduleAppointmentRow
+	err := row.Scan(
+		&i.ID,
+		&i.PatientID,
+		&i.PsychologistID,
+		&i.ScheduledFor,
+		&i.DurationMinutes,
+		&i.Modality,
+		&i.Status,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const updateAppointmentStatus = `-- name: UpdateAppointmentStatus :one

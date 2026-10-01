@@ -12,6 +12,24 @@ import (
 	"github.com/google/uuid"
 )
 
+const completeAppointmentSession = `-- name: CompleteAppointmentSession :exec
+UPDATE session s SET status = 'completed', updated_at = now()
+FROM patient_profile patient
+WHERE s.appointment_id = $1 AND patient.id = s.patient_id
+  AND s.psychologist_id = $2 AND patient.organization_id = $3
+`
+
+type CompleteAppointmentSessionParams struct {
+	AppointmentID  *uuid.UUID `json:"appointment_id"`
+	PsychologistID uuid.UUID  `json:"psychologist_id"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
+}
+
+func (q *Queries) CompleteAppointmentSession(ctx context.Context, arg CompleteAppointmentSessionParams) error {
+	_, err := q.db.Exec(ctx, completeAppointmentSession, arg.AppointmentID, arg.PsychologistID, arg.OrganizationID)
+	return err
+}
+
 const createClinicalRecord = `-- name: CreateClinicalRecord :exec
 INSERT INTO clinical_record (session_id, patient_id, psychologist_id, content_jsonb)
 VALUES ($1, $2, $3, jsonb_build_object('notes', $4::text))
@@ -31,6 +49,23 @@ func (q *Queries) CreateClinicalRecord(ctx context.Context, arg CreateClinicalRe
 		arg.PsychologistID,
 		arg.Notes,
 	)
+	return err
+}
+
+const createClinicalRecordIfMissing = `-- name: CreateClinicalRecordIfMissing :exec
+INSERT INTO clinical_record (session_id, patient_id, psychologist_id, content_jsonb)
+VALUES ($1, $2, $3, jsonb_build_object('notes', ''))
+ON CONFLICT (session_id) DO NOTHING
+`
+
+type CreateClinicalRecordIfMissingParams struct {
+	SessionID      uuid.UUID `json:"session_id"`
+	PatientID      uuid.UUID `json:"patient_id"`
+	PsychologistID uuid.UUID `json:"psychologist_id"`
+}
+
+func (q *Queries) CreateClinicalRecordIfMissing(ctx context.Context, arg CreateClinicalRecordIfMissingParams) error {
+	_, err := q.db.Exec(ctx, createClinicalRecordIfMissing, arg.SessionID, arg.PatientID, arg.PsychologistID)
 	return err
 }
 
@@ -65,6 +100,49 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (C
 		arg.Status,
 	)
 	var i CreateSessionRow
+	err := row.Scan(
+		&i.ID,
+		&i.AppointmentID,
+		&i.PatientID,
+		&i.PsychologistID,
+		&i.OccurredAt,
+		&i.Status,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createSessionFromAppointment = `-- name: CreateSessionFromAppointment :one
+INSERT INTO session (appointment_id, patient_id, psychologist_id, occurred_at, status)
+SELECT a.id, a.patient_id, a.psychologist_id, a.scheduled_for, CASE WHEN a.status = 'completed' THEN 'completed' ELSE 'pending' END
+FROM appointment a JOIN patient_profile patient ON patient.id = a.patient_id
+WHERE a.id = $1 AND a.psychologist_id = $2
+  AND patient.organization_id = $3
+  AND a.status IN ('scheduled', 'confirmed', 'completed') AND a.scheduled_for <= now()
+ON CONFLICT (appointment_id) WHERE appointment_id IS NOT NULL
+DO UPDATE SET appointment_id = EXCLUDED.appointment_id
+RETURNING id, appointment_id, patient_id, psychologist_id, occurred_at, status, created_at
+`
+
+type CreateSessionFromAppointmentParams struct {
+	AppointmentID  uuid.UUID `json:"appointment_id"`
+	PsychologistID uuid.UUID `json:"psychologist_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+}
+
+type CreateSessionFromAppointmentRow struct {
+	ID             uuid.UUID  `json:"id"`
+	AppointmentID  *uuid.UUID `json:"appointment_id"`
+	PatientID      uuid.UUID  `json:"patient_id"`
+	PsychologistID uuid.UUID  `json:"psychologist_id"`
+	OccurredAt     time.Time  `json:"occurred_at"`
+	Status         string     `json:"status"`
+	CreatedAt      time.Time  `json:"created_at"`
+}
+
+func (q *Queries) CreateSessionFromAppointment(ctx context.Context, arg CreateSessionFromAppointmentParams) (CreateSessionFromAppointmentRow, error) {
+	row := q.db.QueryRow(ctx, createSessionFromAppointment, arg.AppointmentID, arg.PsychologistID, arg.OrganizationID)
+	var i CreateSessionFromAppointmentRow
 	err := row.Scan(
 		&i.ID,
 		&i.AppointmentID,
@@ -118,7 +196,8 @@ func (q *Queries) GetActiveRelationship(ctx context.Context, arg GetActiveRelati
 
 const getSession = `-- name: GetSession :one
 SELECT s.id, s.patient_id, p.full_name AS patient_name, s.psychologist_id,
-       s.occurred_at, s.status, s.created_at,
+       s.occurred_at, s.status, s.created_at, s.appointment_id,
+       COALESCE(cr.version, 1)::integer AS version, cr.locked_at,
        CAST(COALESCE(cr.content_jsonb->>'notes', '') AS text) AS notes,
        a.modality, a.duration_minutes
 FROM session s
@@ -137,16 +216,19 @@ type GetSessionParams struct {
 }
 
 type GetSessionRow struct {
-	ID              uuid.UUID `json:"id"`
-	PatientID       uuid.UUID `json:"patient_id"`
-	PatientName     string    `json:"patient_name"`
-	PsychologistID  uuid.UUID `json:"psychologist_id"`
-	OccurredAt      time.Time `json:"occurred_at"`
-	Status          string    `json:"status"`
-	CreatedAt       time.Time `json:"created_at"`
-	Notes           string    `json:"notes"`
-	Modality        *string   `json:"modality"`
-	DurationMinutes *int32    `json:"duration_minutes"`
+	ID              uuid.UUID  `json:"id"`
+	PatientID       uuid.UUID  `json:"patient_id"`
+	PatientName     string     `json:"patient_name"`
+	PsychologistID  uuid.UUID  `json:"psychologist_id"`
+	OccurredAt      time.Time  `json:"occurred_at"`
+	Status          string     `json:"status"`
+	CreatedAt       time.Time  `json:"created_at"`
+	AppointmentID   *uuid.UUID `json:"appointment_id"`
+	Version         int32      `json:"version"`
+	LockedAt        *time.Time `json:"locked_at"`
+	Notes           string     `json:"notes"`
+	Modality        *string    `json:"modality"`
+	DurationMinutes *int32     `json:"duration_minutes"`
 }
 
 func (q *Queries) GetSession(ctx context.Context, arg GetSessionParams) (GetSessionRow, error) {
@@ -160,6 +242,9 @@ func (q *Queries) GetSession(ctx context.Context, arg GetSessionParams) (GetSess
 		&i.OccurredAt,
 		&i.Status,
 		&i.CreatedAt,
+		&i.AppointmentID,
+		&i.Version,
+		&i.LockedAt,
 		&i.Notes,
 		&i.Modality,
 		&i.DurationMinutes,
@@ -283,4 +368,48 @@ func (q *Queries) GetSessionsByPsychologist(ctx context.Context, arg GetSessions
 		return nil, err
 	}
 	return items, nil
+}
+
+const saveSessionNotes = `-- name: SaveSessionNotes :one
+WITH current_record AS (
+  SELECT cr.id, cr.content_jsonb, cr.version
+  FROM clinical_record cr JOIN patient_profile patient ON patient.id = cr.patient_id
+  WHERE cr.session_id = $2 AND cr.psychologist_id = $3
+    AND patient.organization_id = $4
+    AND cr.locked_at IS NULL AND cr.version = $5
+  FOR UPDATE OF cr
+), snapshot AS (
+  INSERT INTO clinical_record_version (clinical_record_id, version_number, content_snapshot, changed_by, change_reason)
+  SELECT id, version, content_jsonb, $6, 'Atualização da evolução da sessão'
+  FROM current_record RETURNING clinical_record_id
+)
+UPDATE clinical_record cr
+SET content_jsonb = jsonb_set(cr.content_jsonb, '{notes}', to_jsonb($1::text)),
+    version = cr.version + 1, updated_at = now()
+FROM snapshot
+WHERE cr.id = snapshot.clinical_record_id
+RETURNING cr.version
+`
+
+type SaveSessionNotesParams struct {
+	Notes          string    `json:"notes"`
+	SessionID      uuid.UUID `json:"session_id"`
+	PsychologistID uuid.UUID `json:"psychologist_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Version        int32     `json:"version"`
+	UserID         uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) SaveSessionNotes(ctx context.Context, arg SaveSessionNotesParams) (int32, error) {
+	row := q.db.QueryRow(ctx, saveSessionNotes,
+		arg.Notes,
+		arg.SessionID,
+		arg.PsychologistID,
+		arg.OrganizationID,
+		arg.Version,
+		arg.UserID,
+	)
+	var version int32
+	err := row.Scan(&version)
+	return version, err
 }

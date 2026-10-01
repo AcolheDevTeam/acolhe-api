@@ -14,3 +14,7 @@ var ErrNotFound = errors.New("sessão não encontrada")
 
 // ErrInvalidInput indica campos ausentes ou inválidos no registro da sessão.
 var ErrInvalidInput = errors.New("dados da sessão inválidos")
+
+var ErrAppointmentNotReady = errors.New("a evolução só pode ser registrada a partir do horário de um atendimento não cancelado")
+var ErrRecordLocked = errors.New("o prontuário está bloqueado para edição")
+var ErrVersionConflict = errors.New("a evolução foi modificada; recarregue antes de salvar")

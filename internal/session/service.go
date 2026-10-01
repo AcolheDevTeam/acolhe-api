@@ -4,10 +4,12 @@ package session
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	db "github.com/joycesilva/acolhe-api/internal/db/generated"
 	"github.com/joycesilva/acolhe-api/internal/tenant"
@@ -156,6 +158,7 @@ func (s *Service) Get(ctx context.Context, sessionID uuid.UUID) (*Session, error
 	return &Session{
 		ID: r.ID, PatientID: r.PatientID, PsychologistID: r.PsychologistID,
 		PatientName: r.PatientName, OccurredAt: r.OccurredAt, Status: r.Status,
+		AppointmentID: r.AppointmentID, Version: r.Version, Locked: r.LockedAt != nil,
 		Notes: r.Notes, Modality: r.Modality, DurationMin: r.DurationMinutes, CreatedAt: r.CreatedAt,
 	}, nil
 }
@@ -188,4 +191,69 @@ func (s *Service) Timeline(ctx context.Context, patientID uuid.UUID) ([]Timeline
 		out = append(out, TimelineItem{Kind: r.Kind, ItemID: r.ItemID, OccurredAt: r.OccurredAt, Status: r.Status})
 	}
 	return out, nil
+}
+
+// FromAppointment abre ou reutiliza um prontuário, sem concluir o agendamento.
+func (s *Service) FromAppointment(ctx context.Context, appointmentID uuid.UUID) (*Session, error) {
+	id, ok := tenant.FromContext(ctx)
+	if !ok || id.Role != "psychologist" {
+		return nil, ErrPsychologistRequired
+	}
+	q := tenant.Queries(ctx, s.q)
+	psy, err := q.GetPsychologistByUser(ctx, id.UserID)
+	if err != nil {
+		return nil, ErrPsychologistRequired
+	}
+	if _, err := q.LockAppointmentForPsychologist(ctx, db.LockAppointmentForPsychologistParams{ID: appointmentID, PsychologistID: psy.ID, OrganizationID: id.OrgID}); err != nil {
+		return nil, ErrNotFound
+	}
+	a, err := q.GetAppointmentForPsychologist(ctx, db.GetAppointmentForPsychologistParams{ID: appointmentID, PsychologistID: psy.ID, OrganizationID: id.OrgID})
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	if a.SessionID != nil {
+		return s.Get(ctx, *a.SessionID)
+	}
+	if a.ScheduledFor.After(time.Now()) || (a.Status != "scheduled" && a.Status != "confirmed" && a.Status != "completed") {
+		return nil, ErrAppointmentNotReady
+	}
+	if _, err := q.GetActiveRelationship(ctx, db.GetActiveRelationshipParams{PatientID: a.PatientID, PsychologistID: psy.ID, OrganizationID: id.OrgID}); err != nil {
+		return nil, ErrNoActiveRelationship
+	}
+	row, err := q.CreateSessionFromAppointment(ctx, db.CreateSessionFromAppointmentParams{AppointmentID: appointmentID, PsychologistID: psy.ID, OrganizationID: id.OrgID})
+	if err != nil {
+		return nil, err
+	}
+	if err := q.CreateClinicalRecordIfMissing(ctx, db.CreateClinicalRecordIfMissingParams{SessionID: row.ID, PatientID: row.PatientID, PsychologistID: row.PsychologistID}); err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, row.ID)
+}
+
+// SaveNotes mantém histórico e recusa sobrescrever uma versão modificada por outra aba.
+func (s *Service) SaveNotes(ctx context.Context, sessionID uuid.UUID, notes string, version int32) (*Session, error) {
+	notes = strings.TrimSpace(notes)
+	if len(notes) > 10000 || version < 1 {
+		return nil, ErrInvalidInput
+	}
+	current, err := s.Get(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if current.Locked {
+		return nil, ErrRecordLocked
+	}
+	id, _ := tenant.FromContext(ctx)
+	q := tenant.Queries(ctx, s.q)
+	if _, err := q.GetActiveRelationship(ctx, db.GetActiveRelationshipParams{PatientID: current.PatientID, PsychologistID: current.PsychologistID, OrganizationID: id.OrgID}); err != nil {
+		return nil, ErrNoActiveRelationship
+	}
+	_, err = q.SaveSessionNotes(ctx, db.SaveSessionNotesParams{SessionID: sessionID, PsychologistID: current.PsychologistID, OrganizationID: id.OrgID, UserID: id.UserID, Notes: notes, Version: version})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrVersionConflict
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, sessionID)
 }

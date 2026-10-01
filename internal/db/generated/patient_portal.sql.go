@@ -55,7 +55,7 @@ WHERE p.user_id = $1
       AND r.status = 'active'
       AND r.consent_id IS NOT NULL
   )
-  AND a.status = 'scheduled'
+  AND a.status IN ('scheduled', 'confirmed')
   AND a.scheduled_for >= now()
 ORDER BY a.scheduled_for
 LIMIT 1

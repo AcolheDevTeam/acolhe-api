@@ -19,6 +19,8 @@ func NewHandler(svc *Service) *Handler {
 func (h *Handler) Register(e *echo.Echo) {
 	g := e.Group("/sessions")
 	g.POST("", h.create)
+	g.PUT("/:id/notes", h.saveNotes)
+	e.POST("/appointments/:id/session", h.fromAppointment)
 	g.GET("", h.list)                         // ?patientId=... (opcional)
 	g.GET("/timeline/:patientId", h.timeline) // timeline unificada do paciente
 	g.GET("/:id", h.get)
@@ -101,4 +103,50 @@ func (h *Handler) timeline(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "erro ao montar timeline")
 	}
 	return c.JSON(http.StatusOK, items)
+}
+
+func (h *Handler) fromAppointment(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "id inválido")
+	}
+	result, err := h.svc.FromAppointment(c.Request().Context(), id)
+	if err != nil {
+		return sessionWriteError(err)
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) saveNotes(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "id inválido")
+	}
+	var req struct {
+		Notes   string `json:"notes"`
+		Version int32  `json:"version"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "dados da evolução inválidos")
+	}
+	result, err := h.svc.SaveNotes(c.Request().Context(), id, req.Notes, req.Version)
+	if err != nil {
+		return sessionWriteError(err)
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+func sessionWriteError(err error) error {
+	switch {
+	case errors.Is(err, ErrInvalidInput):
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrPsychologistRequired), errors.Is(err, ErrNoActiveRelationship), errors.Is(err, ErrRecordLocked):
+		return echo.NewHTTPError(http.StatusForbidden, err.Error())
+	case errors.Is(err, ErrNotFound):
+		return echo.NewHTTPError(http.StatusNotFound, err.Error())
+	case errors.Is(err, ErrAppointmentNotReady), errors.Is(err, ErrVersionConflict):
+		return echo.NewHTTPError(http.StatusConflict, err.Error())
+	default:
+		return echo.NewHTTPError(http.StatusInternalServerError, "não foi possível salvar o prontuário")
+	}
 }

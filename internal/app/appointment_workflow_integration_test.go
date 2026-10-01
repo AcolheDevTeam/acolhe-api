@@ -129,7 +129,23 @@ func TestAppointmentWorkflow_FullStack(t *testing.T) {
 	call("GET", "/patient/next-session?patientId="+patientID.String(), otherPatientToken, nil, 200, &next)
 	assert.Nil(t, next)
 	path := "/appointments/" + scheduled.ID.String()
+	confirmPath := "/patient/appointments/" + scheduled.ID.String() + "/confirm"
+	call("POST", confirmPath, otherPatientToken, nil, 404, nil)
+	wrongOrgToken, err := auth.GenerateToken("secret", patientUserID.String(), "patient", uuid.NewString())
+	require.NoError(t, err)
+	call("POST", confirmPath, wrongOrgToken, nil, 404, nil)
+	call("POST", confirmPath, psyToken, nil, 403, nil)
+	call("POST", "/patient/appointments/invalid/confirm", patientToken, nil, 400, nil)
+	// Campos extras não permitem alterar paciente, horário ou concluir atendimento.
+	call("POST", confirmPath, patientToken, map[string]any{"status": "completed", "patientId": otherPatientID}, 200, nil)
+	call("POST", confirmPath, patientToken, nil, 200, nil)
+	var patientConfirmed appointment.Appointment
+	call("GET", path, psyToken, nil, 200, &patientConfirmed)
+	assert.Equal(t, "confirmed", patientConfirmed.Status)
+	assert.Equal(t, scheduled.ScheduledFor, patientConfirmed.ScheduledFor)
+	assert.Equal(t, scheduled.PatientID, patientConfirmed.PatientID)
 	call("PUT", path+"/status", psyToken, map[string]any{"status": "confirmed"}, 200, nil)
+	call("POST", confirmPath, patientToken, nil, 200, nil)
 	call("GET", "/patient/next-session", patientToken, nil, 200, &next)
 	require.NotNil(t, next)
 	assert.Equal(t, "confirmed", next.Status)
@@ -144,6 +160,7 @@ func TestAppointmentWorkflow_FullStack(t *testing.T) {
 	assert.True(t, future.Equal(next.ScheduledFor))
 	call("POST", "/appointments", psyToken, payload(future), 409, nil)
 	call("PUT", path+"/status", psyToken, map[string]any{"status": "canceled"}, 200, nil)
+	call("POST", confirmPath, patientToken, nil, 409, nil)
 	call("GET", "/patient/next-session", patientToken, nil, 200, &next)
 	assert.Nil(t, next)
 	call("PUT", path, psyToken, payload(future.Add(time.Hour)), 409, nil)
@@ -169,6 +186,7 @@ func TestAppointmentWorkflow_FullStack(t *testing.T) {
 	// Atendimento passado abre um prontuário vazio, sem concluir a sessão.
 	past := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
 	call("POST", "/appointments", psyToken, payload(past), 201, &scheduled)
+	call("POST", "/patient/appointments/"+scheduled.ID.String()+"/confirm", patientToken, nil, 409, nil)
 	path = "/appointments/" + scheduled.ID.String()
 	var record session.Session
 	var recordMu sync.Mutex
@@ -223,6 +241,7 @@ func TestAppointmentWorkflow_FullStack(t *testing.T) {
 	call("PUT", path+"/status", psyToken, map[string]any{"status": "completed"}, 200, nil)
 	call("GET", recordPath, psyToken, nil, 200, &record)
 	assert.Equal(t, "completed", record.Status)
+	call("POST", "/patient/appointments/"+scheduled.ID.String()+"/confirm", patientToken, nil, 409, nil)
 	call("PUT", path+"/status", psyToken, map[string]any{"status": "scheduled"}, 409, nil)
 
 	// Marcar como realizada também cria o registro vazio, mesmo sem abrir a evolução antes.

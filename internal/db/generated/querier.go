@@ -15,6 +15,7 @@ type Querier interface {
 	ArchiveActivityTemplate(ctx context.Context, arg ArchiveActivityTemplateParams) (int64, error)
 	ClaimAssignmentForSubmission(ctx context.Context, arg ClaimAssignmentForSubmissionParams) (int64, error)
 	CompleteAppointmentSession(ctx context.Context, arg CompleteAppointmentSessionParams) error
+	ConfirmPatientAppointment(ctx context.Context, arg ConfirmPatientAppointmentParams) (ConfirmPatientAppointmentRow, error)
 	// Conta agendamentos do psicólogo cujo intervalo se sobrepõe à janela informada.
 	// tstzrange(...) && tstzrange(...) testa interseção de intervalos.
 	// O service calcula window_end = scheduled_for + duration; assim a query só recebe timestamptz.
@@ -62,6 +63,7 @@ type Querier interface {
 	GetLGPDExportRequest(ctx context.Context, arg GetLGPDExportRequestParams) (LgpdExportRequest, error)
 	GetLGPDExportSLAMetric(ctx context.Context, organizationID uuid.UUID) (LgpdExportSlaMetric, error)
 	GetPatient(ctx context.Context, arg GetPatientParams) (GetPatientRow, error)
+	GetPatientAppointment(ctx context.Context, arg GetPatientAppointmentParams) (GetPatientAppointmentRow, error)
 	// Atribuição da própria paciente, com o template pinado e a resposta final, se houver.
 	// Sem assigner_id: aqui quem lê é a paciente, não a psicóloga.
 	GetPatientAssignmentForResponse(ctx context.Context, arg GetPatientAssignmentForResponseParams) (GetPatientAssignmentForResponseRow, error)

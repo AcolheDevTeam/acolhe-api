@@ -25,9 +25,9 @@ func NewService(q db.Querier) *Service {
 // autenticado e o paciente — sem vínculo, devolve ErrNoActiveRelationship.
 func (s *Service) Create(ctx context.Context, req CreateRequest) (*Session, error) {
 	req.Notes = strings.TrimSpace(req.Notes)
-	if req.PatientID == uuid.Nil || req.OccurredAt.IsZero() || req.OccurredAt.After(time.Now().Add(5*time.Minute)) ||
+	if req.PatientID == uuid.Nil || req.OccurredAt.IsZero() ||
 		req.OccurredAt.Before(time.Date(1900, time.January, 1, 0, 0, 0, 0, time.UTC)) ||
-		len(req.Notes) == 0 || len(req.Notes) > 10000 {
+		len(req.Notes) > 10000 {
 		return nil, ErrInvalidInput
 	}
 	id, ok := tenant.FromContext(ctx)

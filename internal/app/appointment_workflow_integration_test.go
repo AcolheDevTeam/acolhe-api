@@ -172,6 +172,23 @@ func TestAppointmentWorkflow_FullStack(t *testing.T) {
 	assert.Equal(t, "confirmed", next.Status)
 	assert.True(t, future.Equal(next.ScheduledFor))
 	call("POST", "/appointments", psyToken, payload(future), 409, nil)
+	// Reagendamento para o passado confirma, mas não conclui nem cria prontuário.
+	pastReschedule := time.Now().UTC().Add(-6 * time.Hour).Truncate(time.Second)
+	call("PUT", path, psyToken, payload(pastReschedule), 200, &scheduled)
+	assert.Equal(t, "confirmed", scheduled.Status)
+	call("GET", path, psyToken, nil, 200, &patientConfirmed)
+	assert.Equal(t, "confirmed", patientConfirmed.Status)
+	assert.Nil(t, patientConfirmed.SessionID)
+	call("GET", "/patient/next-session", patientToken, nil, 200, &next)
+	assert.Nil(t, next, "atendimento passado não aparece como próxima sessão")
+	// Voltar ao futuro exige confirmação novamente.
+	call("PUT", path, psyToken, payload(future), 200, &scheduled)
+	assert.Equal(t, "scheduled", scheduled.Status)
+	// A confirmação automática também funciona partindo de scheduled.
+	call("PUT", path, psyToken, payload(pastReschedule), 200, &scheduled)
+	assert.Equal(t, "confirmed", scheduled.Status)
+	call("PUT", path, psyToken, payload(future), 200, &scheduled)
+	assert.Equal(t, "scheduled", scheduled.Status)
 	call("PUT", path+"/status", psyToken, map[string]any{"status": "canceled"}, 200, nil)
 	call("POST", confirmPath, patientToken, nil, 409, nil)
 	call("GET", "/patient/next-session", patientToken, nil, 200, &next)

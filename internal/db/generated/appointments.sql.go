@@ -271,7 +271,9 @@ func (q *Queries) LockPsychologistSchedule(ctx context.Context, arg LockPsycholo
 
 const rescheduleAppointment = `-- name: RescheduleAppointment :one
 UPDATE appointment a SET scheduled_for = $1,
-  duration_minutes = $2, modality = $3, status = 'scheduled', updated_at = now()
+  duration_minutes = $2, modality = $3,
+  status = CASE WHEN $1::timestamptz <= now() THEN 'confirmed' ELSE 'scheduled' END,
+  updated_at = now()
 FROM patient_profile patient
 WHERE a.id = $4 AND patient.id = a.patient_id
   AND a.psychologist_id = $5 AND patient.organization_id = $6

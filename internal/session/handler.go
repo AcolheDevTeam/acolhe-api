@@ -34,7 +34,7 @@ func (h *Handler) create(c echo.Context) error {
 	s, err := h.svc.Create(c.Request().Context(), req)
 	if err != nil {
 		switch {
-		case errors.Is(err, ErrInvalidInput):
+		case errors.Is(err, ErrInvalidInput), errors.Is(err, ErrFutureClinicalDate):
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		case errors.Is(err, ErrNoActiveRelationship):
 			return echo.NewHTTPError(http.StatusForbidden, err.Error())
@@ -138,7 +138,7 @@ func (h *Handler) saveNotes(c echo.Context) error {
 
 func sessionWriteError(err error) error {
 	switch {
-	case errors.Is(err, ErrInvalidInput):
+	case errors.Is(err, ErrInvalidInput), errors.Is(err, ErrFutureClinicalDate):
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrPsychologistRequired), errors.Is(err, ErrNoActiveRelationship), errors.Is(err, ErrRecordLocked):
 		return echo.NewHTTPError(http.StatusForbidden, err.Error())

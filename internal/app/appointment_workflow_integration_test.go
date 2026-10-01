@@ -116,6 +116,18 @@ func TestAppointmentWorkflow_FullStack(t *testing.T) {
 		}
 	}
 	future := time.Now().UTC().AddDate(0, 0, 1).Truncate(time.Second)
+	// O endpoint clínico antigo não pode ser usado para agendar atendimentos futuros.
+	var futureError map[string]any
+	call("POST", "/sessions", psyToken, map[string]any{"patientId": otherPatientID, "occurredAt": future}, 400, &futureError)
+	assert.Equal(t, "para uma sessão futura, crie um agendamento", futureError["message"])
+	var clinicalCount int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM session WHERE patient_id = $1`, otherPatientID).Scan(&clinicalCount))
+	assert.Zero(t, clinicalCount)
+	var retrospective session.Session
+	call("POST", "/sessions", psyToken, map[string]any{"patientId": otherPatientID, "occurredAt": future.AddDate(0, 0, -2)}, 201, &retrospective)
+	assert.Empty(t, retrospective.Notes)
+	assert.Nil(t, retrospective.AppointmentID)
+
 	payload := func(date time.Time) map[string]any {
 		return map[string]any{"patientId": patientID, "scheduledFor": date, "durationMinutes": 50, "modality": "online"}
 	}

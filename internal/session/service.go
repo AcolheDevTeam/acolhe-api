@@ -32,6 +32,9 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Session, erro
 		len(req.Notes) > 10000 {
 		return nil, ErrInvalidInput
 	}
+	if req.OccurredAt.After(time.Now()) {
+		return nil, ErrFutureClinicalDate
+	}
 	id, ok := tenant.FromContext(ctx)
 	if !ok || id.Role != "psychologist" {
 		return nil, ErrPsychologistRequired

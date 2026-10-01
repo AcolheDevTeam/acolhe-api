@@ -89,9 +89,8 @@ func TestCreateSessionWritesRecordThroughSameTenantQuerier(t *testing.T) {
 		expectedNotes string
 	}{
 		{name: "past date", date: time.Now().UTC().Add(-time.Hour), notes: "  Notas sem espaços externos  ", expectedNotes: "Notas sem espaços externos"},
-		{name: "future date", date: time.Now().UTC().AddDate(1, 0, 0), notes: "Registro", expectedNotes: "Registro"},
-		{name: "empty notes", date: time.Now().UTC().AddDate(1, 0, 0)},
-		{name: "whitespace notes", date: time.Now().UTC().AddDate(1, 0, 0), notes: "  "},
+		{name: "empty notes", date: time.Now().UTC().Add(-time.Hour)},
+		{name: "whitespace notes", date: time.Now().UTC().Add(-time.Hour), notes: "  "},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			occurredAt := test.date
@@ -153,6 +152,19 @@ func TestCreateSessionWritesRecordThroughSameTenantQuerier(t *testing.T) {
 				},
 			)
 			assert.ErrorIs(t, err, expected)
+		})
+	}
+}
+
+func TestCreateSessionRejectsFutureDateBeforeWriting(t *testing.T) {
+	for _, offset := range []time.Duration{time.Second, 5 * time.Minute, 24 * time.Hour} {
+		t.Run(offset.String(), func(t *testing.T) {
+			identity := tenant.Identity{UserID: uuid.New(), OrgID: uuid.New(), Role: "psychologist"}
+			_, err := session.NewService(&testsupport.FakeQuerier{}).Create(
+				tenant.WithIdentity(context.Background(), identity),
+				session.CreateRequest{PatientID: uuid.New(), OccurredAt: time.Now().Add(offset)},
+			)
+			assert.ErrorIs(t, err, session.ErrFutureClinicalDate)
 		})
 	}
 }

@@ -30,7 +30,11 @@ func (h *Handler) create(c echo.Context) error {
 	ch, err := h.svc.Create(c.Request().Context(), req)
 	if err != nil {
 		switch {
-		case errors.Is(err, ErrInvalidMood):
+		case errors.Is(err, ErrDailyCheckinExists):
+			return echo.NewHTTPError(http.StatusConflict, err.Error())
+		case errors.Is(err, ErrPsychologistRequired):
+			return echo.NewHTTPError(http.StatusForbidden, err.Error())
+		case errors.Is(err, ErrInvalidMood), errors.Is(err, ErrInvalidNote):
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		case errors.Is(err, ErrPatientNotInOrg):
 			return echo.NewHTTPError(http.StatusNotFound, err.Error())
@@ -48,6 +52,9 @@ func (h *Handler) list(c echo.Context) error {
 	}
 	items, err := h.svc.List(c.Request().Context(), patientID)
 	if err != nil {
+		if errors.Is(err, ErrPsychologistRequired) {
+			return echo.NewHTTPError(http.StatusForbidden, err.Error())
+		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "erro ao listar check-ins")
 	}
 	return c.JSON(http.StatusOK, items)

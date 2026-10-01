@@ -30,13 +30,13 @@ type Querier interface {
 	CreateAppointment(ctx context.Context, arg CreateAppointmentParams) (CreateAppointmentRow, error)
 	CreateAssignment(ctx context.Context, arg CreateAssignmentParams) (CreateAssignmentRow, error)
 	// Isolamento de org garantido pela checagem do paciente na mesma org (no service).
-	CreateCheckin(ctx context.Context, arg CreateCheckinParams) (Checkin, error)
+	CreateCheckin(ctx context.Context, arg CreateCheckinParams) (CreateCheckinRow, error)
 	CreateClinicalRecord(ctx context.Context, arg CreateClinicalRecordParams) error
 	CreateClinicalRecordIfMissing(ctx context.Context, arg CreateClinicalRecordIfMissingParams) error
 	CreateDocument(ctx context.Context, arg CreateDocumentParams) (CreateDocumentRow, error)
 	CreateLGPDExportRequest(ctx context.Context, arg CreateLGPDExportRequestParams) (LgpdExportRequest, error)
 	CreatePatient(ctx context.Context, arg CreatePatientParams) error
-	CreatePatientCheckin(ctx context.Context, arg CreatePatientCheckinParams) (Checkin, error)
+	CreatePatientCheckin(ctx context.Context, arg CreatePatientCheckinParams) (CreatePatientCheckinRow, error)
 	CreatePatientInvitation(ctx context.Context, arg CreatePatientInvitationParams) (CreatePatientInvitationRow, error)
 	CreatePatientRelationship(ctx context.Context, arg CreatePatientRelationshipParams) (uuid.UUID, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (CreateSessionRow, error)
@@ -97,9 +97,9 @@ type Querier interface {
 	ListAppointmentsByPsychologist(ctx context.Context, arg ListAppointmentsByPsychologistParams) ([]ListAppointmentsByPsychologistRow, error)
 	ListAssignmentsByPatient(ctx context.Context, arg ListAssignmentsByPatientParams) ([]ListAssignmentsByPatientRow, error)
 	ListAssignmentsByPsychologist(ctx context.Context, arg ListAssignmentsByPsychologistParams) ([]ListAssignmentsByPsychologistRow, error)
-	ListCheckinsByPatient(ctx context.Context, arg ListCheckinsByPatientParams) ([]Checkin, error)
+	ListCheckinsByPatient(ctx context.Context, arg ListCheckinsByPatientParams) ([]ListCheckinsByPatientRow, error)
 	ListDocumentsByPatient(ctx context.Context, arg ListDocumentsByPatientParams) ([]ListDocumentsByPatientRow, error)
-	ListPatientCheckins(ctx context.Context, userID *uuid.UUID) ([]ListPatientCheckinsRow, error)
+	ListPatientCheckins(ctx context.Context, arg ListPatientCheckinsParams) ([]ListPatientCheckinsRow, error)
 	ListPatientPendingActivities(ctx context.Context, userID *uuid.UUID) ([]ListPatientPendingActivitiesRow, error)
 	ListPatientsByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListPatientsByOrgRow, error)
 	ListPatientsByPsychologist(ctx context.Context, arg ListPatientsByPsychologistParams) ([]ListPatientsByPsychologistRow, error)
@@ -128,6 +128,7 @@ type Querier interface {
 	// Edição no lugar: só a autora, na própria organização, e nunca em template arquivado.
 	UpdateActivityTemplateInPlace(ctx context.Context, arg UpdateActivityTemplateInPlaceParams) (int64, error)
 	UpdateAppointmentStatus(ctx context.Context, arg UpdateAppointmentStatusParams) (UpdateAppointmentStatusRow, error)
+	UpdatePatientCheckin(ctx context.Context, arg UpdatePatientCheckinParams) (UpdatePatientCheckinRow, error)
 	WriteAuditLog(ctx context.Context, arg WriteAuditLogParams) error
 }
 

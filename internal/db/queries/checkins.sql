@@ -2,15 +2,19 @@
 -- Isolamento de org garantido pela checagem do paciente na mesma org (no service).
 INSERT INTO checkin (patient_id, mood, note)
 VALUES (@patient_id, @mood, @note)
-RETURNING id, patient_id, mood, note, created_at;
+ON CONFLICT (patient_id, daily_day) WHERE daily_day IS NOT NULL DO NOTHING
+RETURNING id, patient_id, mood, note, created_at, updated_at,
+          ((created_at AT TIME ZONE 'America/Fortaleza')::date)::text AS day;
 
 -- name: ListCheckinsByPatient :many
-SELECT c.id, c.patient_id, c.mood, c.note, c.created_at
+SELECT c.id, c.patient_id, c.mood, c.note, c.created_at, c.updated_at,
+       ((c.created_at AT TIME ZONE 'America/Fortaleza')::date)::text AS day
 FROM checkin c
 JOIN patient_profile p ON p.id = c.patient_id
 WHERE c.patient_id = @patient_id
   AND p.organization_id = @organization_id
-ORDER BY c.created_at DESC;
+  AND has_active_clinical_relationship(c.patient_id, @psychologist_id)
+ORDER BY c.created_at DESC, c.id DESC;
 
 -- name: PatientInOrg :one
 -- Confirma que o paciente pertence à organização (usado antes de criar check-in).

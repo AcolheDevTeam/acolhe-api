@@ -57,18 +57,26 @@ func TestCreateAndListCheckinKeepTenantPredicate(t *testing.T) {
 			assert.Equal(t, identity.OrgID, arg.OrganizationID)
 			return true, nil
 		},
-		CreateCheckinFn: func(_ context.Context, arg db.CreateCheckinParams) (db.Checkin, error) {
+		GetPsychologistByUserFn: func(context.Context, uuid.UUID) (db.GetPsychologistByUserRow, error) {
+			return db.GetPsychologistByUserRow{ID: uuid.New()}, nil
+		},
+		GetActiveRelationshipFn: func(_ context.Context, arg db.GetActiveRelationshipParams) (db.GetActiveRelationshipRow, error) {
+			assert.Equal(t, patientID, arg.PatientID)
+			assert.Equal(t, identity.OrgID, arg.OrganizationID)
+			return db.GetActiveRelationshipRow{Status: "active"}, nil
+		},
+		CreateCheckinFn: func(_ context.Context, arg db.CreateCheckinParams) (db.CreateCheckinRow, error) {
 			assert.Equal(t, patientID, arg.PatientID)
 			assert.Equal(t, int32(4), arg.Mood)
-			return db.Checkin{
+			return db.CreateCheckinRow{
 				ID: checkinID, PatientID: arg.PatientID, Mood: arg.Mood,
 				Note: arg.Note, CreatedAt: now,
 			}, nil
 		},
-		ListCheckinsFn: func(_ context.Context, arg db.ListCheckinsByPatientParams) ([]db.Checkin, error) {
+		ListCheckinsFn: func(_ context.Context, arg db.ListCheckinsByPatientParams) ([]db.ListCheckinsByPatientRow, error) {
 			assert.Equal(t, patientID, arg.PatientID)
 			assert.Equal(t, identity.OrgID, arg.OrganizationID)
-			return []db.Checkin{{
+			return []db.ListCheckinsByPatientRow{{
 				ID: checkinID, PatientID: patientID, Mood: 4,
 				Note: &note, CreatedAt: now,
 			}}, nil

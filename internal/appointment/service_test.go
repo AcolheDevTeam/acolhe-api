@@ -158,6 +158,14 @@ func TestAppointmentStatusTransitionsAreOwnedAndIdempotent(t *testing.T) {
 	currentStatus := "scheduled"
 	updates := 0
 	fake := &testsupport.FakeQuerier{
+		CreateSessionFromAppointmentFn: func(_ context.Context, arg db.CreateSessionFromAppointmentParams) (db.CreateSessionFromAppointmentRow, error) {
+			assert.Equal(t, appointmentID, arg.AppointmentID)
+			assert.Equal(t, psychologistID, arg.PsychologistID)
+			assert.Equal(t, identity.OrgID, arg.OrganizationID)
+			return db.CreateSessionFromAppointmentRow{ID: uuid.New(), PatientID: patientID, PsychologistID: psychologistID, AppointmentID: &appointmentID}, nil
+		},
+		CreateClinicalRecordIfMissingFn: func(context.Context, db.CreateClinicalRecordIfMissingParams) error { return nil },
+
 		GetPsychologistByUserFn: func(context.Context, uuid.UUID) (db.GetPsychologistByUserRow, error) {
 			return db.GetPsychologistByUserRow{ID: psychologistID}, nil
 		},

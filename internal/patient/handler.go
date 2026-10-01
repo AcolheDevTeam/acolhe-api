@@ -23,6 +23,7 @@ func (h *Handler) Register(e *echo.Echo) {
 	portal := e.Group("/patient")
 	portal.GET("/context", h.portalContext)
 	portal.GET("/next-session", h.nextSession)
+	portal.POST("/appointments/:id/confirm", h.confirmAppointment)
 	portal.GET("/pending-activities", h.pendingActivities)
 	portal.GET("/check-ins", h.checkins)
 	portal.POST("/check-ins", h.createPatientCheckin)
@@ -39,6 +40,18 @@ func (h *Handler) portalContext(c echo.Context) error {
 
 func (h *Handler) nextSession(c echo.Context) error {
 	result, err := h.svc.NextSession(c.Request().Context())
+	if err != nil {
+		return portalError(err)
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) confirmAppointment(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "agendamento inválido")
+	}
+	result, err := h.svc.ConfirmAppointment(c.Request().Context(), id)
 	if err != nil {
 		return portalError(err)
 	}

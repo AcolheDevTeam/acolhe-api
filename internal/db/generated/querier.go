@@ -14,11 +14,14 @@ type Querier interface {
 	AcceptPatientInvitation(ctx context.Context, arg AcceptPatientInvitationParams) (AcceptPatientInvitationRow, error)
 	ArchiveActivityTemplate(ctx context.Context, arg ArchiveActivityTemplateParams) (int64, error)
 	ClaimAssignmentForSubmission(ctx context.Context, arg ClaimAssignmentForSubmissionParams) (int64, error)
+	CompleteAppointmentSession(ctx context.Context, arg CompleteAppointmentSessionParams) error
+	ConfirmPatientAppointment(ctx context.Context, arg ConfirmPatientAppointmentParams) (ConfirmPatientAppointmentRow, error)
 	// Conta agendamentos do psicólogo cujo intervalo se sobrepõe à janela informada.
 	// tstzrange(...) && tstzrange(...) testa interseção de intervalos.
 	// O service calcula window_end = scheduled_for + duration; assim a query só recebe timestamptz.
 	CountAppointmentConflicts(ctx context.Context, arg CountAppointmentConflictsParams) (int64, error)
 	CountAssignmentsByTemplate(ctx context.Context, templateID uuid.UUID) (int64, error)
+	CountRescheduleConflicts(ctx context.Context, arg CountRescheduleConflictsParams) (int64, error)
 	CreateActivityField(ctx context.Context, arg CreateActivityFieldParams) (uuid.UUID, error)
 	// Uma linha por campo. Os triggers de 20260729072000 garantem coluna tipada única,
 	// unicidade por campo e coerência com o template da atribuição.
@@ -29,6 +32,7 @@ type Querier interface {
 	// Isolamento de org garantido pela checagem do paciente na mesma org (no service).
 	CreateCheckin(ctx context.Context, arg CreateCheckinParams) (Checkin, error)
 	CreateClinicalRecord(ctx context.Context, arg CreateClinicalRecordParams) error
+	CreateClinicalRecordIfMissing(ctx context.Context, arg CreateClinicalRecordIfMissingParams) error
 	CreateDocument(ctx context.Context, arg CreateDocumentParams) (CreateDocumentRow, error)
 	CreateLGPDExportRequest(ctx context.Context, arg CreateLGPDExportRequestParams) (LgpdExportRequest, error)
 	CreatePatient(ctx context.Context, arg CreatePatientParams) error
@@ -36,6 +40,7 @@ type Querier interface {
 	CreatePatientInvitation(ctx context.Context, arg CreatePatientInvitationParams) (CreatePatientInvitationRow, error)
 	CreatePatientRelationship(ctx context.Context, arg CreatePatientRelationshipParams) (uuid.UUID, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (CreateSessionRow, error)
+	CreateSessionFromAppointment(ctx context.Context, arg CreateSessionFromAppointmentParams) (CreateSessionFromAppointmentRow, error)
 	DeclinePatientInvitation(ctx context.Context, arg DeclinePatientInvitationParams) (uuid.UUID, error)
 	// Usado apenas na edição no lugar, quando o template nunca foi atribuído
 	// (portanto não há activity_response_value apontando para os campos).
@@ -58,6 +63,7 @@ type Querier interface {
 	GetLGPDExportRequest(ctx context.Context, arg GetLGPDExportRequestParams) (LgpdExportRequest, error)
 	GetLGPDExportSLAMetric(ctx context.Context, organizationID uuid.UUID) (LgpdExportSlaMetric, error)
 	GetPatient(ctx context.Context, arg GetPatientParams) (GetPatientRow, error)
+	GetPatientAppointment(ctx context.Context, arg GetPatientAppointmentParams) (GetPatientAppointmentRow, error)
 	// Atribuição da própria paciente, com o template pinado e a resposta final, se houver.
 	// Sem assigner_id: aqui quem lê é a paciente, não a psicóloga.
 	GetPatientAssignmentForResponse(ctx context.Context, arg GetPatientAssignmentForResponseParams) (GetPatientAssignmentForResponseRow, error)
@@ -102,7 +108,9 @@ type Querier interface {
 	// para a tela do convite.
 	ListPublishedConsentDocuments(ctx context.Context) ([]ListPublishedConsentDocumentsRow, error)
 	ListResponsesByAssignment(ctx context.Context, assignmentID uuid.UUID) ([]ListResponsesByAssignmentRow, error)
+	LockAppointmentForPsychologist(ctx context.Context, arg LockAppointmentForPsychologistParams) (uuid.UUID, error)
 	LockPatientCreationKey(ctx context.Context, idempotencyKey string) (interface{}, error)
+	LockPsychologistSchedule(ctx context.Context, arg LockPsychologistScheduleParams) (uuid.UUID, error)
 	MarkAssignmentSubmitted(ctx context.Context, id uuid.UUID) error
 	MarkCompleteAssignmentReviewed(ctx context.Context, arg MarkCompleteAssignmentReviewedParams) (int64, error)
 	MarkLGPDExportCompleted(ctx context.Context, arg MarkLGPDExportCompletedParams) (int64, error)
@@ -113,6 +121,8 @@ type Querier interface {
 	// Confirma que o paciente pertence à organização (usado antes de criar check-in).
 	PatientInOrg(ctx context.Context, arg PatientInOrgParams) (bool, error)
 	ReissuePatientInvitation(ctx context.Context, arg ReissuePatientInvitationParams) (ReissuePatientInvitationRow, error)
+	RescheduleAppointment(ctx context.Context, arg RescheduleAppointmentParams) (RescheduleAppointmentRow, error)
+	SaveSessionNotes(ctx context.Context, arg SaveSessionNotesParams) (int32, error)
 	// Cria a resposta final. O submission_id vem do cliente e permite replay idempotente.
 	SubmitTypedResponse(ctx context.Context, arg SubmitTypedResponseParams) (SubmitTypedResponseRow, error)
 	// Edição no lugar: só a autora, na própria organização, e nunca em template arquivado.

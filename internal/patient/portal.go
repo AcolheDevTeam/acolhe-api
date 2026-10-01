@@ -15,9 +15,10 @@ import (
 )
 
 var (
-	ErrPatientOnly       = errors.New("rota disponível somente para paciente")
-	ErrPortalUnavailable = errors.New("contexto do paciente não disponível")
-	ErrInvalidMood       = errors.New("humor deve estar entre 1 e 5")
+	ErrPatientOnly             = errors.New("rota disponível somente para paciente")
+	ErrPortalUnavailable       = errors.New("contexto do paciente não disponível")
+	ErrConfirmationUnavailable = errors.New("este agendamento não pode mais ser confirmado")
+	ErrInvalidMood             = errors.New("humor deve estar entre 1 e 5")
 )
 
 type PortalContext struct {
@@ -102,6 +103,31 @@ func (s *Service) NextSession(ctx context.Context) (*NextSession, error) {
 	return &NextSession{ID: row.ID, ScheduledFor: row.ScheduledFor, DurationMinutes: row.DurationMinutes, Modality: row.Modality, Status: row.Status}, nil
 }
 
+// ConfirmAppointment identifica a paciente pelo usuário autenticado. A atualização
+// condicional impede confirmar um atendimento cancelado ou já iniciado.
+func (s *Service) ConfirmAppointment(ctx context.Context, appointmentID uuid.UUID) (*NextSession, error) {
+	if err := s.requirePatient(ctx); err != nil {
+		return nil, err
+	}
+	id, _ := tenant.FromContext(ctx)
+	q := tenant.Queries(ctx, s.q)
+	_, err := q.GetPatientAppointment(ctx, db.GetPatientAppointmentParams{ID: appointmentID, UserID: &id.UserID, OrganizationID: id.OrgID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	row, err := q.ConfirmPatientAppointment(ctx, db.ConfirmPatientAppointmentParams{ID: appointmentID, UserID: &id.UserID, OrganizationID: id.OrgID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrConfirmationUnavailable
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &NextSession{ID: row.ID, ScheduledFor: row.ScheduledFor, DurationMinutes: row.DurationMinutes, Modality: row.Modality, Status: row.Status}, nil
+}
+
 func (s *Service) PendingActivities(ctx context.Context) ([]PendingActivity, error) {
 	if err := s.requirePatient(ctx); err != nil {
 		return nil, err
@@ -165,6 +191,9 @@ func (s *Service) ProcessSummary(ctx context.Context) (*ProcessSummary, error) {
 }
 
 func portalError(err error) *echo.HTTPError {
+	if errors.Is(err, ErrConfirmationUnavailable) {
+		return echo.NewHTTPError(http.StatusConflict, err.Error())
+	}
 	if errors.Is(err, ErrPatientOnly) {
 		return echo.NewHTTPError(http.StatusForbidden, "acesso não permitido")
 	}

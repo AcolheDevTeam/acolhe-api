@@ -12,6 +12,43 @@ import (
 	"github.com/google/uuid"
 )
 
+const confirmPatientAppointment = `-- name: ConfirmPatientAppointment :one
+UPDATE appointment a SET status = 'confirmed', updated_at = now()
+FROM patient_profile p
+WHERE a.id = $1 AND p.id = a.patient_id AND p.user_id = $2
+  AND p.organization_id = $3 AND p.status <> 'deleted'
+  AND a.status IN ('scheduled', 'confirmed') AND a.scheduled_for > now()
+  AND has_active_clinical_relationship(a.patient_id, a.psychologist_id)
+RETURNING a.id, a.scheduled_for, a.duration_minutes, a.modality, a.status
+`
+
+type ConfirmPatientAppointmentParams struct {
+	ID             uuid.UUID  `json:"id"`
+	UserID         *uuid.UUID `json:"user_id"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
+}
+
+type ConfirmPatientAppointmentRow struct {
+	ID              uuid.UUID `json:"id"`
+	ScheduledFor    time.Time `json:"scheduled_for"`
+	DurationMinutes int32     `json:"duration_minutes"`
+	Modality        string    `json:"modality"`
+	Status          string    `json:"status"`
+}
+
+func (q *Queries) ConfirmPatientAppointment(ctx context.Context, arg ConfirmPatientAppointmentParams) (ConfirmPatientAppointmentRow, error) {
+	row := q.db.QueryRow(ctx, confirmPatientAppointment, arg.ID, arg.UserID, arg.OrganizationID)
+	var i ConfirmPatientAppointmentRow
+	err := row.Scan(
+		&i.ID,
+		&i.ScheduledFor,
+		&i.DurationMinutes,
+		&i.Modality,
+		&i.Status,
+	)
+	return i, err
+}
+
 const createPatientCheckin = `-- name: CreatePatientCheckin :one
 INSERT INTO checkin (patient_id, mood, note)
 SELECT p.id, $1, $2
@@ -43,6 +80,41 @@ func (q *Queries) CreatePatientCheckin(ctx context.Context, arg CreatePatientChe
 	return i, err
 }
 
+const getPatientAppointment = `-- name: GetPatientAppointment :one
+SELECT a.id, a.scheduled_for, a.duration_minutes, a.modality, a.status
+FROM appointment a JOIN patient_profile p ON p.id = a.patient_id
+WHERE a.id = $1 AND p.user_id = $2
+  AND p.organization_id = $3 AND p.status <> 'deleted'
+  AND has_active_clinical_relationship(a.patient_id, a.psychologist_id)
+`
+
+type GetPatientAppointmentParams struct {
+	ID             uuid.UUID  `json:"id"`
+	UserID         *uuid.UUID `json:"user_id"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
+}
+
+type GetPatientAppointmentRow struct {
+	ID              uuid.UUID `json:"id"`
+	ScheduledFor    time.Time `json:"scheduled_for"`
+	DurationMinutes int32     `json:"duration_minutes"`
+	Modality        string    `json:"modality"`
+	Status          string    `json:"status"`
+}
+
+func (q *Queries) GetPatientAppointment(ctx context.Context, arg GetPatientAppointmentParams) (GetPatientAppointmentRow, error) {
+	row := q.db.QueryRow(ctx, getPatientAppointment, arg.ID, arg.UserID, arg.OrganizationID)
+	var i GetPatientAppointmentRow
+	err := row.Scan(
+		&i.ID,
+		&i.ScheduledFor,
+		&i.DurationMinutes,
+		&i.Modality,
+		&i.Status,
+	)
+	return i, err
+}
+
 const getPatientNextAppointment = `-- name: GetPatientNextAppointment :one
 SELECT a.id, a.scheduled_for, a.duration_minutes, a.modality, a.status
 FROM appointment a
@@ -55,7 +127,7 @@ WHERE p.user_id = $1
       AND r.status = 'active'
       AND r.consent_id IS NOT NULL
   )
-  AND a.status = 'scheduled'
+  AND a.status IN ('scheduled', 'confirmed')
   AND a.scheduled_for >= now()
 ORDER BY a.scheduled_for
 LIMIT 1

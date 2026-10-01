@@ -26,7 +26,7 @@ WHERE p.user_id = @user_id
       AND r.status = 'active'
       AND r.consent_id IS NOT NULL
   )
-  AND a.status = 'scheduled'
+  AND a.status IN ('scheduled', 'confirmed')
   AND a.scheduled_for >= now()
 ORDER BY a.scheduled_for
 LIMIT 1;
@@ -90,3 +90,19 @@ WHERE p.user_id = @user_id
       AND r.status = 'active'
       AND r.consent_id IS NOT NULL
   );
+
+-- name: GetPatientAppointment :one
+SELECT a.id, a.scheduled_for, a.duration_minutes, a.modality, a.status
+FROM appointment a JOIN patient_profile p ON p.id = a.patient_id
+WHERE a.id = @id AND p.user_id = @user_id
+  AND p.organization_id = @organization_id AND p.status <> 'deleted'
+  AND has_active_clinical_relationship(a.patient_id, a.psychologist_id);
+
+-- name: ConfirmPatientAppointment :one
+UPDATE appointment a SET status = 'confirmed', updated_at = now()
+FROM patient_profile p
+WHERE a.id = @id AND p.id = a.patient_id AND p.user_id = @user_id
+  AND p.organization_id = @organization_id AND p.status <> 'deleted'
+  AND a.status IN ('scheduled', 'confirmed') AND a.scheduled_for > now()
+  AND has_active_clinical_relationship(a.patient_id, a.psychologist_id)
+RETURNING a.id, a.scheduled_for, a.duration_minutes, a.modality, a.status;

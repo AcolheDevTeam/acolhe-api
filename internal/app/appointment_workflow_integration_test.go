@@ -270,6 +270,19 @@ func TestAppointmentWorkflow_FullStack(t *testing.T) {
 	call("PUT", recordPath+"/notes", psyToken, map[string]any{"notes": "  Evolução inicial  ", "version": record.Version}, 200, &record)
 	assert.Equal(t, "Evolução inicial", record.Notes)
 	assert.Equal(t, int32(2), record.Version)
+	// A listagem deve carregar o vínculo usado pelo prontuário para não duplicar agendamentos.
+	var listed []appointment.Appointment
+	call("GET", "/appointments", psyToken, nil, 200, &listed)
+	foundLinked := false
+	for _, item := range listed {
+		if item.ID == scheduled.ID {
+			foundLinked = true
+			require.NotNil(t, item.SessionID)
+			assert.Equal(t, record.ID, *item.SessionID)
+		}
+	}
+	require.True(t, foundLinked)
+
 	call("PUT", recordPath+"/notes", psyToken, map[string]any{"notes": "texto antigo", "version": 1}, 409, nil)
 	call("GET", path, psyToken, nil, 200, &scheduled)
 	assert.Equal(t, "scheduled", scheduled.Status, "salvar evolução não conclui o atendimento")

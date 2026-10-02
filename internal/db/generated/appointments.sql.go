@@ -174,9 +174,10 @@ func (q *Queries) GetAppointmentForPsychologist(ctx context.Context, arg GetAppo
 
 const listAppointmentsByPsychologist = `-- name: ListAppointmentsByPsychologist :many
 SELECT a.id, a.patient_id, a.psychologist_id, a.scheduled_for, a.duration_minutes,
-       a.modality, a.status, a.created_at, p.full_name AS patient_name
+       a.modality, a.status, a.created_at, p.full_name AS patient_name, s.id AS session_id
 FROM appointment a
 JOIN patient_profile p ON p.id = a.patient_id
+LEFT JOIN session s ON s.appointment_id = a.id
 WHERE a.psychologist_id = $1
   AND p.organization_id = $2
 ORDER BY a.scheduled_for
@@ -188,15 +189,16 @@ type ListAppointmentsByPsychologistParams struct {
 }
 
 type ListAppointmentsByPsychologistRow struct {
-	ID              uuid.UUID `json:"id"`
-	PatientID       uuid.UUID `json:"patient_id"`
-	PsychologistID  uuid.UUID `json:"psychologist_id"`
-	ScheduledFor    time.Time `json:"scheduled_for"`
-	DurationMinutes int32     `json:"duration_minutes"`
-	Modality        string    `json:"modality"`
-	Status          string    `json:"status"`
-	CreatedAt       time.Time `json:"created_at"`
-	PatientName     string    `json:"patient_name"`
+	ID              uuid.UUID  `json:"id"`
+	PatientID       uuid.UUID  `json:"patient_id"`
+	PsychologistID  uuid.UUID  `json:"psychologist_id"`
+	ScheduledFor    time.Time  `json:"scheduled_for"`
+	DurationMinutes int32      `json:"duration_minutes"`
+	Modality        string     `json:"modality"`
+	Status          string     `json:"status"`
+	CreatedAt       time.Time  `json:"created_at"`
+	PatientName     string     `json:"patient_name"`
+	SessionID       *uuid.UUID `json:"session_id"`
 }
 
 func (q *Queries) ListAppointmentsByPsychologist(ctx context.Context, arg ListAppointmentsByPsychologistParams) ([]ListAppointmentsByPsychologistRow, error) {
@@ -218,6 +220,7 @@ func (q *Queries) ListAppointmentsByPsychologist(ctx context.Context, arg ListAp
 			&i.Status,
 			&i.CreatedAt,
 			&i.PatientName,
+			&i.SessionID,
 		); err != nil {
 			return nil, err
 		}

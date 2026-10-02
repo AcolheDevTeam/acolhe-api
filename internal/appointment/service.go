@@ -231,6 +231,7 @@ func (s *Service) List(ctx context.Context) ([]Appointment, error) {
 		item := toAppointment(r.ID, r.PatientID, r.PsychologistID, r.ScheduledFor,
 			r.DurationMinutes, r.Modality, r.Status, r.CreatedAt)
 		item.PatientName = r.PatientName
+		item.SessionID = r.SessionID
 		out = append(out, *item)
 	}
 	return out, nil

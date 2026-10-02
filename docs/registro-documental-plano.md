@@ -131,9 +131,8 @@ Responsabilidades necessárias:
 4. Listar versões paginadas e consultar uma versão autorizada.
 5. Restaurar uma versão com controle de concorrência e registro de origem.
 
-Os nomes definitivos das rotas e os limites de conteúdo/página serão definidos
-na implementação conforme as convenções do projeto. Não há endpoints disponíveis
-com esse contrato ainda. As listas paginadas retornarão explicitamente:
+As rotas implementadas e os limites de conteúdo/página estão documentados em
+[registro-documental-api.md](registro-documental-api.md). As listas paginadas retornarão explicitamente:
 
 ```json
 {
@@ -203,23 +202,41 @@ Detalhes do formato, validação, rotação, backups e resposta a vazamentos est
 
 ## 6. Critérios de aceite
 
-- [ ] Cada autora tem no máximo um caderno por paciente/categoria, independente de sessão.
-- [ ] Os dois caminhos abrem o mesmo conteúdo; categorias vazias podem ser iniciadas pela ficha.
-- [ ] A lista geral inclui apenas pacientes com caderno salvo pela autora, com paginação completa.
-- [ ] Não existe autosave; Salvar depende de mudança, autorização e ausência de gravação em curso.
-- [ ] Gravar e limpar texto criam versões corretas; reenvios sem mudança não duplicam versões.
-- [ ] Histórico paginado permite ver conteúdo e diferenças em modal grande.
-- [ ] Restaurar grava uma versão nova; Usar no editor não grava; texto pendente exige confirmação.
-- [ ] Conflitos entre abas preservam o texto e não sobrescrevem uma revisão mais recente.
-- [ ] Paciente ou vínculo inativo permite leitura da autora e bloqueia escrita e restauração.
-- [ ] Outra psicóloga, paciente e administrador não acessam conteúdo ou versões pela API.
-- [ ] Conteúdo e versões são criptografados; falhas não geram plaintext, logs sensíveis ou perda silenciosa.
-- [ ] Rotação cobre histórico e conteúdo atual, preservando dados e versões clínicas.
-- [ ] Avisos de saída protegem texto pendente, sem rascunhos persistidos no navegador.
-- [ ] Erros são específicos em português e caches não misturam pacientes ou autoras.
-- [ ] Testes cobrem API, RLS, concorrência, paginação, criptografia e recuperação/rotação.
-- [ ] Web passa typecheck/testes e interfaces seguem o design, com conferência mobile conforme o guia.
-- [ ] PRs API e web apontam para develop, incluem validação e ordem de publicação.
+- [x] Cada autora tem no máximo um caderno por paciente/categoria, independente de sessão.
+- [x] Os dois caminhos abrem o mesmo conteúdo; categorias vazias podem ser iniciadas pela ficha.
+- [x] A lista geral inclui apenas pacientes com caderno salvo pela autora, com paginação completa.
+- [x] Não existe autosave; Salvar depende de mudança, autorização e ausência de gravação em curso.
+- [x] Gravar e limpar texto criam versões corretas; reenvios sem mudança não duplicam versões.
+- [x] Histórico paginado permite ver conteúdo e diferenças em modal grande.
+- [x] Restaurar grava uma versão nova; Usar no editor não grava; texto pendente exige confirmação.
+- [x] Conflitos entre abas preservam o texto e não sobrescrevem uma revisão mais recente.
+- [x] Paciente ou vínculo inativo permite leitura da autora e bloqueia escrita e restauração.
+- [x] Outra psicóloga, paciente e administrador não acessam conteúdo ou versões pela API.
+- [x] Conteúdo e versões são criptografados; falhas não geram plaintext, logs sensíveis ou perda silenciosa.
+- [x] Rotação cobre histórico e conteúdo atual, preservando dados e versões clínicas.
+- [x] Avisos de saída protegem texto pendente, sem rascunhos persistidos no navegador.
+- [x] Erros são específicos em português e caches não misturam pacientes ou autoras.
+- [x] Testes cobrem API, RLS, concorrência, paginação, criptografia e recuperação/rotação.
+- [x] Web passa typecheck/testes e interfaces seguem o design, com conferência mobile conforme o guia.
+- [x] PRs API e web apontam para develop, incluem validação e ordem de publicação.
 
 Este plano implementa Registro Documental. A emissão de declarações/PDFs na aba
 Documentos é outra funcionalidade e não integra esta entrega.
+
+## Validação da implementação — 02/10/2026
+
+API: [PR #34](https://github.com/AcolheDevTeam/acolhe-api/pull/34).
+Web: [PR #39](https://github.com/AcolheDevTeam/acolhe-web/pull/39).
+Ambos usam `feat/registro-documental`, com base em `develop`, sem merge automático.
+
+Verificações locais: testes Go, integração documental com PostgreSQL/RLS e race
+detector, lint, aplicação de migrations, testes do configurador, CLI de inventário
+/rotação e recuperação de backup isolado. Web: typecheck, 94 testes, build e fluxo
+real em Chromium, incluindo conflito entre abas e conferência visual em 390 px.
+
+Os critérios acima registram comportamento implementado e verificado localmente;
+não significam publicação em staging/produção. A ativação exige configuração das
+chaves e verificação do inventário por ambiente. Registros legados são preservados
+integralmente; sua conversão depende de identificar o formato e a chave de origem,
+conforme o procedimento do contrato. Custódia e recuperação dos backups reais
+permanecem tarefas operacionais do ambiente.

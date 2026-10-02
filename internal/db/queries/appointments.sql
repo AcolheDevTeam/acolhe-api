@@ -1,8 +1,9 @@
 -- name: ListAppointmentsByPsychologist :many
 SELECT a.id, a.patient_id, a.psychologist_id, a.scheduled_for, a.duration_minutes,
-       a.modality, a.status, a.created_at, p.full_name AS patient_name
+       a.modality, a.status, a.created_at, p.full_name AS patient_name, s.id AS session_id
 FROM appointment a
 JOIN patient_profile p ON p.id = a.patient_id
+LEFT JOIN session s ON s.appointment_id = a.id
 WHERE a.psychologist_id = @psychologist_id
   AND p.organization_id = @organization_id
 ORDER BY a.scheduled_for;

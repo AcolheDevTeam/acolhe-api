@@ -196,7 +196,7 @@ CREATE TABLE clinical_record_version (
 );
 
 -- Registro Documental: estritamente do psicólogo. Tabela separada de propósito.
-CREATE TABLE documentary_record (
+CREATE TABLE documentary_record_legacy (
   id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   author_id         uuid NOT NULL REFERENCES psychologist_profile(id),
   patient_id        uuid REFERENCES patient_profile(id),   -- nulo p/ anotações soltas
@@ -207,6 +207,33 @@ CREATE TABLE documentary_record (
   created_at        timestamptz NOT NULL DEFAULT now(),
   updated_at        timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE documentary_record (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id uuid NOT NULL REFERENCES organization(id),
+  author_id uuid NOT NULL REFERENCES psychologist_profile(id),
+  patient_id uuid NOT NULL REFERENCES patient_profile(id),
+  category text NOT NULL CHECK (category IN ('hypothesis','technical_observation','planning','transcription','other')),
+  content_encrypted bytea NOT NULL,
+  revision integer NOT NULL CHECK (revision > 0),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (organization_id, author_id, patient_id, category),
+  UNIQUE (id, organization_id, author_id)
+);
+CREATE TABLE documentary_record_version (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  record_id uuid NOT NULL REFERENCES documentary_record(id),
+  organization_id uuid NOT NULL REFERENCES organization(id),
+  author_id uuid NOT NULL REFERENCES psychologist_profile(id),
+  revision integer NOT NULL CHECK (revision > 0),
+  content_encrypted bytea NOT NULL,
+  restored_from integer,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (record_id, revision),
+  FOREIGN KEY (record_id, organization_id, author_id) REFERENCES documentary_record(id, organization_id, author_id),
+  FOREIGN KEY (record_id, restored_from) REFERENCES documentary_record_version(record_id, revision)
+);
+CREATE INDEX idx_documentary_version_history ON documentary_record_version(record_id, revision DESC);
 
 CREATE TABLE document_template (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -467,8 +494,8 @@ CREATE INDEX idx_session_psychologist_date ON session (psychologist_id, occurred
 CREATE INDEX idx_clinical_version_record_version
   ON clinical_record_version (clinical_record_id, version_number DESC);
 
-CREATE INDEX idx_documentary_author ON documentary_record (author_id);
-CREATE INDEX idx_documentary_patient ON documentary_record (patient_id) WHERE patient_id IS NOT NULL;
+CREATE INDEX idx_documentary_author ON documentary_record_legacy (author_id);
+CREATE INDEX idx_documentary_patient ON documentary_record_legacy (patient_id) WHERE patient_id IS NOT NULL;
 
 CREATE INDEX idx_template_author ON activity_template (author_id);
 CREATE INDEX idx_template_type ON activity_template (type_id);
@@ -958,8 +985,26 @@ CREATE POLICY patient_isolation ON patient_profile
   );
 
 -- Registro Documental: só o autor, sempre.
-CREATE POLICY documentary_record_author_only ON documentary_record
-  FOR ALL USING (author_id = current_psychologist_id());
+ALTER TABLE documentary_record_legacy ENABLE ROW LEVEL SECURITY;
+ALTER TABLE documentary_record_version ENABLE ROW LEVEL SECURITY;
+CREATE POLICY documentary_legacy_read ON documentary_record_legacy FOR SELECT USING (
+ current_user_role() = 'psychologist' AND author_id = current_psychologist_id()
+);
+CREATE POLICY documentary_record_author_only ON documentary_record FOR ALL USING (
+ current_user_role() = 'psychologist' AND author_id = current_psychologist_id()
+ AND organization_id = current_organization_id()
+) WITH CHECK (
+ current_user_role() = 'psychologist' AND author_id = current_psychologist_id()
+ AND organization_id = current_organization_id()
+);
+CREATE POLICY documentary_version_author_only ON documentary_record_version FOR ALL USING (
+ current_user_role() = 'psychologist' AND author_id = current_psychologist_id()
+ AND organization_id = current_organization_id()
+) WITH CHECK (
+ current_user_role() = 'psychologist' AND author_id = current_psychologist_id()
+ AND organization_id = current_organization_id()
+);
+
 
 CREATE POLICY lgpd_export_request_actor_only ON lgpd_export_request
   FOR ALL USING (
@@ -1105,3 +1150,15 @@ CREATE POLICY checkin_patient_update ON checkin FOR UPDATE USING (
     SELECT id FROM patient_profile WHERE user_id = current_user_id() AND organization_id = current_organization_id()
   ) AND daily_day = (now() AT TIME ZONE 'America/Fortaleza')::date
 );
+
+CREATE INDEX idx_documentary_notebook_patient ON documentary_record(organization_id, author_id, patient_id);
+
+CREATE TABLE documentary_maintenance_audit (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ database_actor text NOT NULL DEFAULT current_user,
+ source_key_id text NOT NULL,
+ target_key_id text NOT NULL,
+ item_count integer NOT NULL,
+ occurred_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE documentary_maintenance_audit ENABLE ROW LEVEL SECURITY;

@@ -18,7 +18,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api \
- && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker
+ && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker \
+ && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/documentary-maintenance ./cmd/documentary-maintenance
 
 # ---------- CLI do Atlas (binário estático) p/ aplicar migrations no deploy ----------
 FROM alpine:3.20 AS atlas
@@ -29,7 +30,7 @@ RUN apk add --no-cache curl \
 # ---------- imagem final ----------
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates wget
-COPY --from=build /out/api /out/worker /usr/local/bin/
+COPY --from=build /out/api /out/worker /out/documentary-maintenance /usr/local/bin/
 COPY --from=atlas /usr/local/bin/atlas /usr/local/bin/atlas
 # migrations + atlas.sum embutidos p/ o serviço `migrate` do compose
 COPY internal/db/migrations /migrations

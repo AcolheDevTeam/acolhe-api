@@ -101,6 +101,14 @@ internal/db/schema.sql ──► sqlc  ──► internal/db/generated/    (como
 o service o extrai com `tenant.OrgID(ctx)` — o handler nunca conhece a lógica de tenant.
 
 ## Notas de segurança (do ERD)
+
+O escopo aprovado e a sequência de implementação dos cadernos estão no
+[Plano do Registro Documental](docs/registro-documental-plano.md).
+
+O desenho aprovado para criptografia dos cadernos, rotação de chaves e resposta a
+vazamentos está em [Registro Documental: criptografia e operação](docs/registro-documental-criptografia.md).
+Esse fluxo ainda será implementado; o documento identifica as limitações atuais.
+
 - **RLS** é a 2ª camada. A integração do `SET LOCAL acolhe.*` por transação está
   prevista para a Fase 5 (middleware de tenant).
 - `documentary_record` é **só do psicólogo autor**.

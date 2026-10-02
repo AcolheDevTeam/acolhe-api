@@ -78,7 +78,7 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          source: deploy/docker-compose.yml,deploy/backup,deploy/postgres-init
+          source: deploy/docker-compose.yml,deploy/backup,deploy/postgres-init,deploy/configure-documentary.py
           target: /home/ubuntu/acolhe
           strip_components: 1
 
@@ -97,11 +97,13 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
           FRONTEND_URL: ${{ vars.FRONTEND_URL }}
+          DOCUMENTARY_ACTIVE_KEY_ID: ${{ secrets.DOCUMENTARY_ACTIVE_KEY_ID }}
+          DOCUMENTARY_ENCRYPTION_KEYS: ${{ secrets.DOCUMENTARY_ENCRYPTION_KEYS }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          envs: GHCR_USER,GHCR_TOKEN,CADDY_DOMAIN,SMTP_ADDRESS,SMTP_USERNAME,SMTP_PASSWORD,SMTP_FROM,FRONTEND_URL
+          envs: GHCR_USER,GHCR_TOKEN,CADDY_DOMAIN,SMTP_ADDRESS,SMTP_USERNAME,SMTP_PASSWORD,SMTP_FROM,FRONTEND_URL,DOCUMENTARY_ACTIVE_KEY_ID,DOCUMENTARY_ENCRYPTION_KEYS
           script: |
             set -euo pipefail
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
@@ -136,6 +138,7 @@ jobs:
               app_url="$(printf '%s' "$db_url" | sed -E "s#^(postgres(ql)?://)[^@]*@#\\1acolhe_app:${app_pw}@#")"
               printf 'APP_DATABASE_URL=%s\n' "$app_url" >> .env
             fi
+            python3 configure-documentary.py
             chmod 600 .env
 
             docker compose --env-file .env pull

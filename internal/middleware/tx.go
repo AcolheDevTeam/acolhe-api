@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
@@ -24,7 +25,8 @@ import (
 func TenantTx(pool *pgxpool.Pool) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			if pool == nil || publicPaths[c.Path()] {
+			// O domínio documental confirma sua própria transação antes da resposta HTTP.
+			if pool == nil || publicPaths[c.Path()] || strings.HasPrefix(c.Path(), "/documentary/") {
 				return next(c)
 			}
 			id, ok := tenant.FromContext(c.Request().Context())

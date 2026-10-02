@@ -78,6 +78,8 @@ services:
       - path: .env
         required: false
     environment:
+      DOCUMENTARY_ACTIVE_KEY_ID: ${DOCUMENTARY_ACTIVE_KEY_ID:-}
+      DOCUMENTARY_ENCRYPTION_KEYS: ${DOCUMENTARY_ENCRYPTION_KEYS:-}
       PORT: "8080"
       DATABASE_URL: postgres://acolhe:acolhe@postgres:5432/acolhe?sslmode=disable
       REDIS_ADDR: redis:6379

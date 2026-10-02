@@ -58,6 +58,7 @@ type Querier interface {
 	GetAssignmentDetailInOrg(ctx context.Context, arg GetAssignmentDetailInOrgParams) (GetAssignmentDetailInOrgRow, error)
 	// Confirma que o assignment existe e pertence à organização (via paciente).
 	GetAssignmentInOrg(ctx context.Context, arg GetAssignmentInOrgParams) (GetAssignmentInOrgRow, error)
+	GetDocumentaryNotebook(ctx context.Context, arg GetDocumentaryNotebookParams) (GetDocumentaryNotebookRow, error)
 	GetInvitationByCreationKey(ctx context.Context, arg GetInvitationByCreationKeyParams) (GetInvitationByCreationKeyRow, error)
 	GetInvitationByDigest(ctx context.Context, tokenDigest []byte) (GetInvitationByDigestRow, error)
 	GetLGPDExportRequest(ctx context.Context, arg GetLGPDExportRequestParams) (LgpdExportRequest, error)
@@ -98,6 +99,7 @@ type Querier interface {
 	ListAssignmentsByPatient(ctx context.Context, arg ListAssignmentsByPatientParams) ([]ListAssignmentsByPatientRow, error)
 	ListAssignmentsByPsychologist(ctx context.Context, arg ListAssignmentsByPsychologistParams) ([]ListAssignmentsByPsychologistRow, error)
 	ListCheckinsByPatient(ctx context.Context, arg ListCheckinsByPatientParams) ([]ListCheckinsByPatientRow, error)
+	ListDocumentaryVersions(ctx context.Context, arg ListDocumentaryVersionsParams) ([]ListDocumentaryVersionsRow, error)
 	ListDocumentsByPatient(ctx context.Context, arg ListDocumentsByPatientParams) ([]ListDocumentsByPatientRow, error)
 	ListPatientCheckins(ctx context.Context, arg ListPatientCheckinsParams) ([]ListPatientCheckinsRow, error)
 	ListPatientPendingActivities(ctx context.Context, userID *uuid.UUID) ([]ListPatientPendingActivitiesRow, error)

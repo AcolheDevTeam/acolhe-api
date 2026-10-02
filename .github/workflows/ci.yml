@@ -54,6 +54,10 @@ jobs:
       - name: go test
         run: go test ./...
 
+      - name: Configuração dos segredos documentais
+        run: python3 -m unittest discover -s deploy -p 'test_*.py'
+
+
   migrations:
     name: migrations (integridade + aplicação)
     # Os testes de integração aplicam internal/db/schema.sql direto (testcontainers),

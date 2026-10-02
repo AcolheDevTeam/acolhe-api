@@ -7,8 +7,9 @@ por paciente e categoria. O texto é contínuo, semelhante a um editor simples:
 a profissional acrescenta, remove e reorganiza seus pensamentos ao longo do
 acompanhamento, sem precisar de sessão ou atendimento para registrar conteúdo.
 
-Este documento consolida as decisões aprovadas na conversa. É um plano, não uma
-declaração de funcionalidade disponível. A implementação deverá ser entregue em
+Este documento consolida as decisões aprovadas na conversa. A implementação na branch `feat/registro-documental` está descrita em
+[registro-documental-api.md](registro-documental-api.md); disponibilidade depende
+de publicação e configuração por ambiente. A implementação deverá ser entregue em
 branches com o mesmo nome, a partir de `develop`, com PRs separados para API e web.
 A branch iniciada para esta entrega é `feat/registro-documental`.
 

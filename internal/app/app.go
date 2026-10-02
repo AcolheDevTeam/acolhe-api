@@ -18,6 +18,7 @@ import (
 	"github.com/joycesilva/acolhe-api/internal/checkin"
 	db "github.com/joycesilva/acolhe-api/internal/db/generated"
 	"github.com/joycesilva/acolhe-api/internal/document"
+	"github.com/joycesilva/acolhe-api/internal/documentary"
 	"github.com/joycesilva/acolhe-api/internal/mailer"
 	"github.com/joycesilva/acolhe-api/internal/middleware"
 	"github.com/joycesilva/acolhe-api/internal/notification"
@@ -39,7 +40,8 @@ type App struct {
 type Option func(*options)
 
 type options struct {
-	patient []patient.Option
+	patient         []patient.Option
+	documentaryKeys *documentary.Keyring
 }
 
 // WithInvitationMailer liga o envio de convites de pacientes por e-mail.
@@ -47,6 +49,10 @@ func WithInvitationMailer(m mailer.Mailer, frontendURL string) Option {
 	return func(o *options) {
 		o.patient = append(o.patient, patient.WithInvitationMailer(m, frontendURL))
 	}
+}
+
+func WithDocumentaryKeys(keys *documentary.Keyring) Option {
+	return func(o *options) { o.documentaryKeys = keys }
 }
 
 func New(pool *pgxpool.Pool, q db.Querier, queue *asynq.Client, jwtSecret string, opts ...Option) *App {
@@ -91,6 +97,7 @@ func New(pool *pgxpool.Pool, q db.Querier, queue *asynq.Client, jwtSecret string
 	appointment.NewHandler(appointment.NewService(q)).Register(e)
 	activity.NewHandler(activity.NewService(q)).Register(e)
 	document.NewHandler(document.NewService(q, queue)).Register(e)
+	documentary.NewHandler(documentary.NewService(pool, o.documentaryKeys)).Register(e)
 	checkin.NewHandler(checkin.NewService(q)).Register(e)
 	notification.NewHandler(notification.NewService(queue)).Register(e)
 

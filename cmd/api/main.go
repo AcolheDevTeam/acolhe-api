@@ -12,6 +12,7 @@ import (
 	"github.com/joycesilva/acolhe-api/internal/config"
 	"github.com/joycesilva/acolhe-api/internal/database"
 	db "github.com/joycesilva/acolhe-api/internal/db/generated"
+	"github.com/joycesilva/acolhe-api/internal/documentary"
 	"github.com/joycesilva/acolhe-api/internal/mailer"
 	"github.com/joycesilva/acolhe-api/internal/queue"
 )
@@ -32,6 +33,12 @@ func main() {
 	defer func() { _ = redis.Close() }()
 
 	var appOptions []app.Option
+	keys, keyErr := documentary.ParseKeyring(os.Getenv("DOCUMENTARY_ACTIVE_KEY_ID"), os.Getenv("DOCUMENTARY_ENCRYPTION_KEYS"))
+	if keyErr != nil {
+		log.Print("registro documental indisponível: configuração criptográfica ausente ou inválida")
+	} else {
+		appOptions = append(appOptions, app.WithDocumentaryKeys(keys))
+	}
 	if cfg.SMTPAddress != "" {
 		smtpMailer, err := mailer.NewSMTP(mailer.Config{
 			Address: cfg.SMTPAddress, Username: cfg.SMTPUsername,

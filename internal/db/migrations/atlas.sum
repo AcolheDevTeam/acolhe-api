@@ -1,4 +1,4 @@
-h1:XyFZxBBiv71DIBlIh+NYDScZcFIj7tDp0pO9S505fEc=
+h1:y+vCXPj3NG0MmclVyhBqf7NrskG2TTHHDbVqRm45v4w=
 20260529120000_baseline.sql h1:ByTjg/JkoMvwaDFFkYERvKB5UlGiRBM/wQCp8Fln1bQ=
 20260529235643_add_checkin.sql h1:ZvYa6ocQrpHv6Y9AtOaCXcGBxWD5QHhZWdAS2wnMt04=
 20260728190000_add_clinical_rls_policies.sql h1:4IDWbG2EKltEwA5gKj1Yvq9WanlCjih9ZdUbpgNJ1zs=
@@ -15,3 +15,4 @@ h1:XyFZxBBiv71DIBlIh+NYDScZcFIj7tDp0pO9S505fEc=
 20261001010000_link_appointment_session.sql h1:QLbNXdqawFjynn+ws5otHWmVfbN95vPIanf2fIgTlOY=
 20261001020000_patient_confirm_appointment.sql h1:fWZyZn6d2G7MUoD3ekBarBSG6GCr8xv79L1S1ScjQ/I=
 20261001130000_daily_checkin.sql h1:UtmmfgfSEPBT1CEiKZl2Chc0n/wBZoTwbXC0Jh9XWDA=
+20261001160000_documentary_notebooks.sql h1:96xRHQQHckhR8FOHHgoP0oMFQiJrDxZN9vhrxbouIuw=

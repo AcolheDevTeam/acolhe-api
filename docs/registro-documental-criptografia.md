@@ -2,17 +2,56 @@
 
 ## Estado desta documentação
 
-Este documento registra o desenho aprovado para a implementação do Registro
-Documental e seu procedimento operacional. **Não descreve uma funcionalidade já
-disponível.** Na data desta documentação, o banco possui `documentary_record` e
-uma política de acesso exclusivo à autora, mas não há endpoints de cadernos,
-versionamento ou ferramenta de recriptografia implementados.
+A implementação está na branch `feat/registro-documental`. O domínio usa um
+conjunto próprio de chaves, independente de `PII_ENCRYPTION_KEY` e JWT. O contrato
+HTTP e a preservação de registros legados estão em
+[registro-documental-api.md](registro-documental-api.md). Esta entrega não
+configura segredos nem executa rotação em staging/produção automaticamente.
 
-O helper `encryptPII` em `internal/account/service.go` atende outro fluxo e usa
-`PII_ENCRYPTION_KEY`. Ele não implementa este conjunto de chaves nem a rotação
-dos cadernos. Não reutilizar ou alterar essa chave para configurar o Registro
-Documental. Até a implementação e seus testes estarem concluídos, as variáveis
-abaixo não têm efeito na aplicação. Não há comando de rotação pronto para executar.
+## Comandos implementados
+
+O binário `documentary-maintenance` acompanha a imagem da API. Também pode ser
+executado com `go run ./cmd/documentary-maintenance`. Recebe `DATABASE_URL`,
+`DOCUMENTARY_ACTIVE_KEY_ID` e `DOCUMENTARY_ENCRYPTION_KEYS` pelo ambiente protegido;
+nunca passe chaves em argumentos. A conexão administrativa precisa ter
+BYPASSRLS/superusuário: o comando rejeita a conexão filtrada da aplicação para não
+informar incorretamente um inventário vazio.
+
+```sh
+# Ambiente previamente carregado de arquivo protegido; não imprimir os valores.
+documentary-maintenance -mode inventory
+documentary-maintenance -mode reencrypt -from v1 -to v2 -batch-size 100 -max-batches 100
+documentary-maintenance -mode inventory
+```
+
+`-to` precisa coincidir com a chave ativa. O limite vale por tabela e execução;
+repetir o comando retoma os envelopes ainda na origem. A saída é JSON com totais
+por identificador (`current`, `versions`), `legacy`, `failures` e, na rotação,
+`migrated`. Código 1 indica falha, itens ainda pendentes ou registros legados cuja dependência
+criptográfica ainda não foi resolvida. A saída não contém
+texto, hashes de texto, nonce ou chaves. O inventário verifica a decriptação de
+**todos** os envelopes, inclusive das pacientes inativas.
+
+Um lock administrativo exclusivo impede rotações simultâneas. Cada lote usa
+locks de linha e ignora itens ocupados, sem sobrescrever uma gravação concorrente;
+o inventário final exige que nenhum item permaneça na origem. Auditoria separada
+em `documentary_maintenance_audit` guarda usuário do banco, identificadores das
+chaves, quantidade e data operacional. Revisões e datas clínicas não mudam.
+
+Os GitHub Secrets `DOCUMENTARY_ACTIVE_KEY_ID` e `DOCUMENTARY_ENCRYPTION_KEYS` são
+específicos de cada Environment. O deploy executa `deploy/configure-documentary.py`
+na VM: rejeita duplicatas/formatos inválidos, atualiza `.env` atomicamente com modo
+600 e preserva as outras variáveis. Ambos os secrets vazios preservam a configuração
+existente; para desabilitar o fluxo deliberadamente, remova sua configuração no
+ambiente protegido e recrie o container. `docker compose up -d` recria a API quando
+as variáveis mudam; `restart` sozinho não basta. A API continua atendendo os outros
+domínios se as chaves documentais estiverem ausentes/inválidas.
+
+Antes da publicação: configurar chaves independentes e sua cópia de recuperação,
+conferir `legacy`, aplicar migrações, verificar leitura/escrita e só então ativar
+o web. Testar recuperação de backup com as chaves corretas em ambiente isolado.
+A custódia externa das chaves e o teste de recuperação dos backups reais continuam
+sendo responsabilidades operacionais; não são comprovados pelos testes unitários.
 
 ## 1. Configuração aprovada
 
@@ -41,7 +80,7 @@ DOCUMENTARY_ENCRYPTION_KEYS='{"v1":"<chave antiga>","v2":"<chave nova>"}'
 
 No `.env`, o JSON fica em uma linha, entre aspas simples. No GitHub Secret
 `DOCUMENTARY_ENCRYPTION_KEYS`, o valor será o JSON puro, sem essas aspas externas.
-O deploy deverá validar o valor e atualizar o `.env` sem imprimir o segredo,
+O deploy valida o valor e atualizar o `.env` sem imprimir o segredo,
 preservando as demais variáveis e mantendo o arquivo com permissão `600`.
 
 Desenvolvimento, staging e produção terão chaves diferentes. O conjunto de chaves
@@ -53,8 +92,7 @@ a chave com um gerador criptograficamente seguro e gravá-la diretamente em um
 arquivo protegido ou no gerenciador de segredos; não deve exibi-la no console.
 
 O workflow atual em `.github/workflows/deploy.yml` já atualiza segredos SMTP no
-`.env` por SSH. Acrescentar as variáveis documentais a esse fluxo faz parte da
-implementação futura. Isso evita editar o painel da Oracle, mas não elimina a
+`.env` por SSH. Acrescentar as variáveis documentais a esse fluxo foi incluído nesta implementação. Isso evita editar o painel da Oracle, mas não elimina a
 dependência de SSH do deploy atual. Se a conexão falhar, a rotação não está
 publicada: confirmar o resultado do deploy e da configuração, sem mostrar valores.
 
@@ -120,7 +158,7 @@ retomada. Não reverter a chave ativa para uma chave comprometida em um incident
 
 ## 4. Requisitos da rotina administrativa de recriptografia
 
-Esta rotina ainda deverá ser implementada e testada antes de executar em produção.
+A rotina implementada deve ser validada em staging antes de executar em produção.
 Ela deve oferecer inventário sem mutações e execução em lotes, com origem,
 destino, progresso, resumo e código de saída indicando falhas. Receber chaves pela
 configuração protegida, nunca como argumentos de linha de comando.

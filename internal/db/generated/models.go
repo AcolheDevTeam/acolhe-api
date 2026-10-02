@@ -211,7 +211,28 @@ type DocumentTemplate struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+type DocumentaryMaintenanceAudit struct {
+	ID            uuid.UUID `json:"id"`
+	DatabaseActor string    `json:"database_actor"`
+	SourceKeyID   string    `json:"source_key_id"`
+	TargetKeyID   string    `json:"target_key_id"`
+	ItemCount     int32     `json:"item_count"`
+	OccurredAt    time.Time `json:"occurred_at"`
+}
+
 type DocumentaryRecord struct {
+	ID               uuid.UUID `json:"id"`
+	OrganizationID   uuid.UUID `json:"organization_id"`
+	AuthorID         uuid.UUID `json:"author_id"`
+	PatientID        uuid.UUID `json:"patient_id"`
+	Category         string    `json:"category"`
+	ContentEncrypted []byte    `json:"content_encrypted"`
+	Revision         int32     `json:"revision"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+type DocumentaryRecordLegacy struct {
 	ID               uuid.UUID  `json:"id"`
 	AuthorID         uuid.UUID  `json:"author_id"`
 	PatientID        *uuid.UUID `json:"patient_id"`
@@ -221,6 +242,17 @@ type DocumentaryRecord struct {
 	Tags             []string   `json:"tags"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+type DocumentaryRecordVersion struct {
+	ID               uuid.UUID `json:"id"`
+	RecordID         uuid.UUID `json:"record_id"`
+	OrganizationID   uuid.UUID `json:"organization_id"`
+	AuthorID         uuid.UUID `json:"author_id"`
+	Revision         int32     `json:"revision"`
+	ContentEncrypted []byte    `json:"content_encrypted"`
+	RestoredFrom     *int32    `json:"restored_from"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 type LgpdExportRequest struct {

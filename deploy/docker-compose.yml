@@ -93,6 +93,8 @@ services:
       migrate:
         condition: service_completed_successfully
     environment:
+      DOCUMENTARY_ACTIVE_KEY_ID: ${DOCUMENTARY_ACTIVE_KEY_ID:-}
+      DOCUMENTARY_ENCRYPTION_KEYS: ${DOCUMENTARY_ENCRYPTION_KEYS:-}
       PORT: "8080"
       DATABASE_URL: ${APP_DATABASE_URL}
       REDIS_ADDR: redis:6379
